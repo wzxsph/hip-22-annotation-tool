@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hip-22-annotation-tool"
+version = "0.1.0"
+description = "FastAPI and Canvas annotation tool for hip X-ray 22-point labels"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx2",
+    "python-multipart",
+    "numpy",
+    "opencv-python-headless",
+    "Pillow",
+    "ultralytics",
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["annotation_tool"]

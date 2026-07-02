@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>22 点髋关节 X 光标注</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <p>hip-22-point-annotator</p>
+          <h1>髋关节 X 光 22 点标注</h1>
+        </div>
+        <div class="top-actions">
+          <label class="button primary">
+            打开图像
+            <input id="fileInput" type="file" accept="image/*" hidden />
+          </label>
+          <button id="btnFolder" type="button">导入文件夹</button>
+          <button id="btnSave" type="button">保存</button>
+          <button id="btnExportYolo" type="button">导出 YOLO</button>
+          <button id="btnUndo" type="button" aria-label="撤销">↶</button>
+          <button id="btnRedo" type="button" aria-label="重做">↷</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="side-panel point-panel">
+          <div class="panel-head">
+            <div>
+              <h2>关键点</h2>
+              <p>left/right 字段跟随图像左右，不做解剖左右互换。</p>
+            </div>
+          </div>
+          <div class="annotator-row">
+            <label for="annotatorInput">标注员</label>
+            <input id="annotatorInput" type="text" value="default" autocomplete="off" />
+          </div>
+          <div class="tool-row" role="group" aria-label="工具">
+            <button class="tool-button active" data-tool="select" type="button">选择</button>
+            <button class="tool-button" data-tool="point" type="button">放点</button>
+            <button class="tool-button" data-tool="line" type="button">连线</button>
+            <button id="btnFit" type="button">适配</button>
+            <button id="btnToggleLabels" type="button">编号</button>
+          </div>
+          <div class="point-groups" id="pointGroups"></div>
+        </aside>
+
+        <section class="canvas-column">
+          <div class="canvas-toolbar">
+            <div class="image-title" id="imageTitle">未打开图像</div>
+            <div class="status-text" id="statusText">就绪</div>
+          </div>
+          <div class="canvas-wrap" id="canvasWrap">
+            <canvas id="mainCanvas"></canvas>
+            <div class="context-menu" id="contextMenu">
+              <div class="context-title" id="contextTitle">选择点位</div>
+              <div id="contextItems"></div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="side-panel review-panel">
+          <div class="panel-head">
+            <div>
+              <h2>当前图像</h2>
+              <p id="completionText">0 / 22</p>
+            </div>
+          </div>
+          <div class="summary-grid">
+            <div>
+              <span>模型</span>
+              <strong id="countModel">0</strong>
+            </div>
+            <div>
+              <span>估计</span>
+              <strong id="countEstimated">0</strong>
+            </div>
+            <div>
+              <span>人工</span>
+              <strong id="countManual">0</strong>
+            </div>
+            <div>
+              <span>缺失</span>
+              <strong id="countMissing">22</strong>
+            </div>
+          </div>
+          <div class="selected-box">
+            <span>选中点</span>
+            <strong id="selectedLabel">-</strong>
+            <small id="selectedCoords">-</small>
+          </div>
+          <div class="settings-box">
+            <div class="settings-title">工作流</div>
+            <label class="toggle-row">
+              <input id="autoDetectToggle" type="checkbox" checked />
+              <span>启用自动识别</span>
+            </label>
+            <label class="toggle-row">
+              <input id="autoSaveToggle" type="checkbox" />
+              <span>自动保存</span>
+            </label>
+            <div class="dataset-root-box">
+              <span>当前工作区</span>
+              <small id="datasetRootText">annotation-tool</small>
+              <button id="btnChooseDatasetRoot" type="button">选择目录</button>
+            </div>
+            <div class="dataset-root-box">
+              <span>保存规则</span>
+              <small>JSON 保存到 annotations；YOLO txt 保存到图片同目录</small>
+            </div>
+            <div class="dataset-root-box">
+              <span>自动识别</span>
+              <small id="autoDetectQueueText">未排队</small>
+            </div>
+          </div>
+          <div class="connection-box">
+            <div class="settings-title">连线</div>
+            <strong id="selectedConnectionLabel">未选中连线</strong>
+            <button id="btnDeleteConnection" type="button">取消选中连线</button>
+            <div id="connectionList" class="connection-list"></div>
+          </div>
+          <div class="warning-list" id="warningList"></div>
+        </aside>
+      </section>
+
+      <footer class="thumb-strip" id="thumbStrip"></footer>
+    </main>
+
+    <dialog id="folderDialog">
+      <form method="dialog" class="folder-dialog">
+        <h2>导入文件夹</h2>
+        <label for="folderPathInput">文件夹绝对路径</label>
+        <div class="folder-input-row">
+          <input id="folderPathInput" type="text" placeholder="/path/to/images" />
+          <button id="btnPickFolder" type="button">选择</button>
+        </div>
+        <p id="folderError" class="dialog-error"></p>
+        <div class="dialog-actions">
+          <button value="cancel" type="submit">取消</button>
+          <button id="btnConfirmFolder" value="default" type="button">导入</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/app.js?v=public-standalone-2"></script>
+  </body>
+</html>

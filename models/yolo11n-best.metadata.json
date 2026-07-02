@@ -1,0 +1,46 @@
+{
+  "model_id": "yolo11n-curriculum-stage2-fused-best",
+  "task": "side11 hip_side pose, 1 class x 11 keypoints",
+  "created_at": "2026-07-02T00:00:00+08:00",
+  "source_weights": "/home/samsong/Desktop/hip-xray-ai/datasets/derived/side11-curriculum-v1/runs/yolo11n/stage2-fused/weights/best.pt",
+  "archived_weights": "/home/samsong/Desktop/hip-xray-ai/datasets/derived/model-zoo/side11/yolo11n-curriculum-stage2-fused-best.pt",
+  "sha256": "f9892b4aaa4395576b6eec5b0ee336d93bf94784e35e8d30ba34e465a40d2774",
+  "base_model": "yolo11n-pose.pt",
+  "status": "stable_baseline",
+  "training": {
+    "curriculum_root": "/home/samsong/Desktop/hip-xray-ai/datasets/derived/side11-curriculum-v1",
+    "stage1": "datasets1/annotations partial labels for #1/#2/#3",
+    "stage1_epochs": 200,
+    "stage2": "dataset4 full side11 labels fused with datasets1 #1/#2/#3",
+    "stage2_epochs": 80,
+    "stage3": "not used; previous run was killed before training",
+    "imgsz": 800,
+    "batch": 16
+  },
+  "evaluation": {
+    "ultralytics_stage2_results_csv": "/home/samsong/Desktop/hip-xray-ai/datasets/derived/side11-curriculum-v1/runs/yolo11n/stage2-fused/results.csv",
+    "custom_eval_json": "/home/samsong/Desktop/hip-xray-ai/datasets/derived/side11-curriculum-v1/eval-yolo11n-stage2-vs-dataset4/side11_eval.json",
+    "custom_eval_summary": {
+      "images": 174,
+      "detected_side_histogram": {
+        "2": 174
+      },
+      "side_assignment_violations": 0,
+      "overall": {
+        "count": 3788,
+        "mean_px": 14.557,
+        "median_px": 11.431,
+        "pck_05": 0.958,
+        "pck_10": 0.9963
+      },
+      "priority_1_3": null,
+      "remaining_4_11": null
+    },
+    "hospital_raw_prediction_output": "/home/samsong/Desktop/hip-xray-ai/datasets/derived/side11-curriculum-v1/hospital-raw-yolo11n-stage2"
+  },
+  "notes": [
+    "Use as current yolo11n side11 baseline.",
+    "left_* and right_* follow image-left/image-right annotation-tool convention.",
+    "For workspace prelabeling, preserve trusted #1/#2/#3 and use side11 mainly for #4-#11."
+  ]
+}
