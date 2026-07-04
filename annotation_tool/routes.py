@@ -57,6 +57,12 @@ class SelectFolderRequest(BaseModel):
     purpose: str = "import"
 
 
+class AutoDetectImageRequest(BaseModel):
+    filename: str
+    preserve_manual: bool = True
+    include_partial: bool = True
+
+
 def _is_image_file(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_EXTENSIONS
 
@@ -272,6 +278,36 @@ def _blank_annotation_for_image(filename: str, image: Image.Image, *, split: str
     return ensure_keypoint_template(annotation)
 
 
+def _count_visible_keypoints(annotation: Annotation) -> int:
+    return sum(1 for point in annotation.keypoints.values() if point.visible and point.x is not None and point.y is not None)
+
+
+def _count_manual_keypoints(annotation: Annotation) -> int:
+    return sum(
+        1
+        for point in annotation.keypoints.values()
+        if point.visible and point.x is not None and point.y is not None and point.source == "manual"
+    )
+
+
+def _merge_auto_keypoints(existing: Annotation, auto_annotation: Annotation, *, preserve_manual: bool) -> Annotation:
+    existing = ensure_keypoint_template(existing)
+    auto_annotation = ensure_keypoint_template(auto_annotation)
+    for key, auto_point in auto_annotation.keypoints.items():
+        current = existing.keypoints.get(key)
+        if (
+            preserve_manual
+            and current is not None
+            and current.visible
+            and current.x is not None
+            and current.y is not None
+            and current.source == "manual"
+        ):
+            continue
+        existing.keypoints[key] = auto_point
+    return ensure_keypoint_template(existing)
+
+
 def _choose_folder_with_dialog(title: str) -> Path:
     try:
         import tkinter as tk
@@ -437,6 +473,71 @@ async def save_annotation_data(annotation: Annotation):
         "annotation_path": str(annotation_path(annotation.image.filename, root).relative_to(root)),
         "label_path": str(saved_label.relative_to(root)) if saved_label.is_relative_to(root) else str(saved_label),
     }
+
+
+@router.post("/auto-detect-image")
+async def auto_detect_image(request: AutoDetectImageRequest):
+    filename = _safe_filename(request.filename)
+    root = current_root()
+    image_path = find_image_path(filename, root)
+    if image_path is None or not image_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    image = _read_image_path(image_path)
+    split = _split_from_image_path(image_path)
+    settings = load_settings()
+    existing = load_annotation(filename, root)
+    if existing is None:
+        existing = create_blank_annotation(filename, image.width, image.height, annotator=settings.get("annotator", "default"))
+        existing.image.split = split
+    else:
+        existing = ensure_keypoint_template(existing)
+        existing.image.width = image.width
+        existing.image.height = image.height
+        existing.image.split = normalize_split(split)
+
+    result = estimate_keypoints_from_image(image, min_visible_keypoints=1, include_partial=request.include_partial)
+    auto_annotation = create_blank_annotation(filename, image.width, image.height, annotator=existing.annotator.user_id)
+    auto_annotation.image.split = normalize_split(split)
+    auto_annotation.keypoints = result.keypoints
+    auto_annotation = ensure_keypoint_template(auto_annotation)
+    result_visible = _count_visible_keypoints(auto_annotation)
+    preserved_manual = _count_manual_keypoints(existing) if request.preserve_manual else 0
+
+    if result_visible > 0:
+        annotation = _merge_auto_keypoints(existing, auto_annotation, preserve_manual=request.preserve_manual)
+        applied = True
+    else:
+        annotation = existing
+        applied = False
+
+    annotation.auto_initialization = {
+        "source": result.source,
+        "strategy": result.strategy,
+        "attempts": result.attempts,
+        "warnings": result.warnings,
+        "manual_retry": True,
+        "include_partial": request.include_partial,
+        "preserve_manual": request.preserve_manual,
+        "created_at": annotation.annotator.created_at,
+    }
+    save_annotation(annotation, root)
+    upsert_manifest_image(image_path, annotation=annotation, root=root, split=annotation.image.split)
+    saved_label = label_path(annotation.image.filename, root, annotation.image.split)
+    payload = model_to_dict(annotation)
+    payload["image_url"] = f"/api/annotation/image/{filename}"
+    payload["auto_detect"] = {
+        "source": result.source,
+        "strategy": result.strategy,
+        "attempts": result.attempts,
+        "warnings": result.warnings,
+        "visible_count": result_visible,
+        "applied": applied,
+        "preserved_manual_count": preserved_manual,
+        "annotation_path": str(annotation_path(annotation.image.filename, root).relative_to(root)),
+        "label_path": str(saved_label.relative_to(root)) if saved_label.is_relative_to(root) else str(saved_label),
+    }
+    return payload
 
 
 @router.get("/auto-detect/status")

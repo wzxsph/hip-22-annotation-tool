@@ -43,7 +43,12 @@ _model_lock = threading.Lock()
 _model_cache: dict[str, Any] = {}
 
 
-def estimate_keypoints_from_image(image: Image.Image) -> AutoAnnotationResult:
+def estimate_keypoints_from_image(
+    image: Image.Image,
+    *,
+    min_visible_keypoints: int | None = None,
+    include_partial: bool = False,
+) -> AutoAnnotationResult:
     image = image.convert("RGB")
     warnings: list[str] = []
     keypoints = _empty_template()
@@ -63,9 +68,10 @@ def estimate_keypoints_from_image(image: Image.Image) -> AutoAnnotationResult:
         warnings.append(f"yolo11n-best load failed: {exc}")
         return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=False, source="model-unavailable")
 
-    min_visible = _min_visible_keypoints()
+    min_visible = max(1, int(min_visible_keypoints if min_visible_keypoints is not None else _min_visible_keypoints()))
     best_decoded = keypoints
     best_visible = 0
+    best_strategy = ""
     failed_attempts = 0
 
     for attempt in _prediction_attempts():
@@ -94,6 +100,7 @@ def estimate_keypoints_from_image(image: Image.Image) -> AutoAnnotationResult:
         if visible_count > best_visible:
             best_decoded = decoded
             best_visible = visible_count
+            best_strategy = str(attempt["name"])
         if visible_count >= min_visible:
             keypoints.update(decoded)
             return AutoAnnotationResult(
@@ -106,10 +113,25 @@ def estimate_keypoints_from_image(image: Image.Image) -> AutoAnnotationResult:
             )
 
     if best_visible > 0:
-        warnings.append(
-            f"yolo11n-best returned only {best_visible} visible side11 keypoints; "
-            f"need at least {min_visible}, keeping blank manual template."
-        )
+        if include_partial:
+            warnings.append(
+                f"yolo11n-best returned only {best_visible} visible side11 keypoints; "
+                "using partial model result for manual review."
+            )
+            keypoints.update(best_decoded)
+            return AutoAnnotationResult(
+                keypoints=keypoints,
+                warnings=warnings,
+                model_available=True,
+                source="yolo11n-best-partial",
+                attempts=attempts,
+                strategy=best_strategy or "partial",
+            )
+        else:
+            warnings.append(
+                f"yolo11n-best returned only {best_visible} visible side11 keypoints; "
+                f"need at least {min_visible}, keeping blank manual template."
+            )
     else:
         warnings.append("yolo11n-best returned no visible side11 keypoints after fallback attempts.")
     if failed_attempts and failed_attempts == len(attempts):

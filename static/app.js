@@ -125,6 +125,7 @@ const App = {
     document.getElementById("autoSaveToggle").addEventListener("change", App.saveSettings);
     document.getElementById("annotatorInput").addEventListener("change", App.saveSettings);
     document.getElementById("btnSave").addEventListener("click", () => App.saveAnnotation());
+    document.getElementById("btnAutoDetect").addEventListener("click", App.handleAutoDetectCurrent);
     document.getElementById("btnExportYolo").addEventListener("click", () => {
       window.location.href = "/api/annotation/export-yolo";
     });
@@ -319,6 +320,52 @@ const App = {
       App.setStatus(`文件夹已导入：${data.total || 0} 张，后台识别 ${data.queued || 0} 张`);
     } catch (err) {
       error.textContent = err.message;
+    }
+  },
+
+  handleAutoDetectCurrent: async () => {
+    if (!App.state.currentFilename || !App.state.annotation) {
+      App.setStatus("请先打开一张图片");
+      return;
+    }
+    const button = document.getElementById("btnAutoDetect");
+    button.disabled = true;
+    const saved = await App.saveAnnotation({ silent: true, skipManifest: true });
+    if (saved === false) {
+      button.disabled = false;
+      return;
+    }
+    App.setStatus("正在重新自动识别当前图片...");
+    try {
+      const res = await fetch("/api/annotation/auto-detect-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: App.state.currentFilename,
+          preserve_manual: true,
+          include_partial: true,
+        }),
+      });
+      const data = await App.readJsonResponse(res, "auto detect image failed");
+      const info = data.auto_detect || {};
+      App.applyAnnotation(data);
+      App.state.lastSave = {
+        filename: data.image.filename,
+        timeText: new Date().toLocaleTimeString(),
+        annotationPath: info.annotation_path || "annotations",
+        labelPath: info.label_path || "同名 txt",
+      };
+      await App.loadManifest();
+      App.renderSaveInfo();
+      if (info.applied && info.visible_count > 0) {
+        App.setStatus(`自动识别完成：识别到 ${info.visible_count} 个点，已保留人工修改点`);
+      } else {
+        App.setStatus("自动识别仍未找到可用点，请手工标注或把图片发给项目团队排查");
+      }
+    } catch (err) {
+      App.setStatus(`自动识别失败: ${err.message}`);
+    } finally {
+      button.disabled = false;
     }
   },
 
