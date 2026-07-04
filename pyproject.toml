@@ -11,14 +11,25 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
     "fastapi",
     "uvicorn",
-    "httpx2",
     "python-multipart",
     "numpy",
     "opencv-python-headless",
     "Pillow",
     "ultralytics",
+]
+
+[project.optional-dependencies]
+test = [
+    "httpx",
     "pytest",
 ]
+windows-cpu = [
+    "matplotlib",
+    "pyinstaller",
+]
+
+[project.scripts]
+hip22-annotation-tool = "annotation_tool.desktop:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

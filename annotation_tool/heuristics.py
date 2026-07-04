@@ -9,6 +9,7 @@ from typing import Any, Dict
 import numpy as np
 from PIL import Image
 
+from .paths import resource_path
 from .schema import LANDMARK_DEFS, SIDES, Keypoint, empty_keypoint, key_for, make_keypoint
 
 
@@ -16,7 +17,6 @@ SOURCE_NAME = "pose11_side"
 DEFAULT_MODEL_NAME = "yolo11n-best.pt"
 DEFAULT_CONFIDENCE = 0.25
 DEFAULT_IMGSZ = 800
-ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def model_path_from_env() -> Path:
     configured = os.environ.get("HIP22_MODEL_PATH", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return ROOT / "models" / DEFAULT_MODEL_NAME
+    return resource_path("models", DEFAULT_MODEL_NAME)
 
 
 def _empty_template() -> Dict[str, Keypoint]:

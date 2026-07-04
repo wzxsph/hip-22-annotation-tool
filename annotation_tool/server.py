@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .paths import resource_path
 from .routes import router as annotation_router
 
 
-ROOT = Path(__file__).resolve().parents[1]
-STATIC_DIR = ROOT / "static"
+STATIC_DIR = resource_path("static")
 
 app = FastAPI(title="Hip 22-Point Annotation Tool", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

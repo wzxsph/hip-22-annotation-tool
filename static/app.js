@@ -15,7 +15,7 @@ const DEFAULT_LANDMARKS = [
 const DEFAULT_SETTINGS = {
   dataset_root: "annotation-tool",
   auto_detect: true,
-  autosave: false,
+  autosave: true,
   annotator: "default",
 };
 
@@ -385,6 +385,10 @@ const App = {
   },
 
   loadByName: async (filename, options = {}) => {
+    if (App.state.annotation && App.state.currentFilename && App.state.currentFilename !== filename) {
+      const saved = await App.saveAnnotation({ silent: true, skipManifest: true });
+      if (saved === false) return;
+    }
     App.setStatus("正在打开缩略图...");
     try {
       const res = await fetch(`/api/annotation/load-by-name?filename=${encodeURIComponent(filename)}`);
@@ -551,7 +555,7 @@ const App = {
   },
 
   saveAnnotation: async (options = {}) => {
-    if (!App.state.annotation) return;
+    if (!App.state.annotation) return true;
     App.state.annotation.annotator = App.state.annotation.annotator || {};
     App.state.annotation.annotator.user_id = document.getElementById("annotatorInput").value.trim() || "default";
     App.state.settings.annotator = App.state.annotation.annotator.user_id;
@@ -568,9 +572,11 @@ const App = {
       });
       await App.readJsonResponse(res, "save failed");
       App.setStatus(options.silent ? "已自动保存" : "已保存");
-      await App.loadManifest();
+      if (!options.skipManifest) await App.loadManifest();
+      return true;
     } catch (err) {
       App.setStatus(`保存失败: ${err.message}`);
+      return false;
     }
   },
 

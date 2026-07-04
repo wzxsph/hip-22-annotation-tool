@@ -1,4 +1,5 @@
 .venv/
+.venv-win-cpu/
 .pytest_cache/
 __pycache__/
 *.pyc
@@ -18,6 +19,7 @@ tool-settings.json
 retuve-data/
 backups/
 prelabel-report.json
+demo_picture/
 
 *.zip
 *.log

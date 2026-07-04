@@ -36,7 +36,7 @@ cd hip-22-annotation-tool
 
 uv venv --python python3.12
 source .venv/bin/activate
-uv pip install -r requirements.txt
+uv pip install -r requirements-dev.txt
 uv run pytest
 ```
 
@@ -47,6 +47,24 @@ uv run uvicorn annotation_tool.server:app --host 127.0.0.1 --port 8010
 ```
 
 Open `http://127.0.0.1:8010/`.
+
+## Windows Hospital Package
+
+For hospital delivery, build the CPU-only Windows ZIP on a Windows machine with Python 3.10-3.12:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_cpu.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\package_zip.ps1 -SkipBuild
+powershell -ExecutionPolicy Bypass -File .\dist\smoke_test.ps1
+```
+
+Share only the ZIP after the smoke test passes. See:
+
+- [Windows CPU build notes](docs/windows-cpu-build.md)
+- [Windows ZIP distribution](docs/windows-zip-distribution.md)
+- [Chinese hospital user guide](docs/hospital-user-guide.md)
+- [Demo video script](docs/demo-video-script.md)
+- [Internal data preparation](docs/internal-data-prep.md)
 
 ## Model Setup
 

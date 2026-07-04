@@ -8,10 +8,11 @@ from typing import Optional
 
 from PIL import Image, ImageOps
 
+from .paths import default_dataset_root, runtime_root
 from .schema import Annotation, Manifest, ManifestImage, annotation_from_dict, model_to_dict, normalize_split, utc_now
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = runtime_root()
 IMAGES_DIRNAME = "images"
 LABELS_DIRNAME = "labels"
 ANNOTATIONS_DIRNAME = "annotations"
@@ -42,9 +43,9 @@ def settings_path() -> Path:
 
 def default_settings() -> dict:
     return {
-        "dataset_root": str(ROOT),
+        "dataset_root": str(default_dataset_root()),
         "auto_detect": True,
-        "autosave": False,
+        "autosave": True,
         "annotator": "default",
     }
 
