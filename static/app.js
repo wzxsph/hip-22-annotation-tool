@@ -42,6 +42,8 @@ const App = {
     history: [],
     historyIndex: -1,
     manifestImages: [],
+    progress: null,
+    statusFilter: "all",
     autosaveTimer: null,
     thumbObserver: null,
     autoDetectPollTimer: null,
@@ -131,6 +133,9 @@ const App = {
       App.state.showLabels = !App.state.showLabels;
     });
     document.getElementById("btnDeleteConnection").addEventListener("click", App.deleteSelectedConnection);
+    document.querySelectorAll("#progressFilters button").forEach((button) => {
+      button.addEventListener("click", () => App.setStatusFilter(button.dataset.statusFilter || "all"));
+    });
 
     document.querySelectorAll(".tool-button").forEach((button) => {
       button.addEventListener("click", () => App.setTool(button.dataset.tool));
@@ -318,6 +323,7 @@ const App = {
       if (!res.ok) throw new Error(await res.text());
       const data = await App.readJsonResponse(res, "manifest failed");
       App.state.manifestImages = data.images || [];
+      App.state.progress = data.progress || null;
       App.state.autoDetectStatus = data.auto_detect || App.state.autoDetectStatus;
       if (data.settings) {
         App.state.settings = { ...DEFAULT_SETTINGS, ...data.settings };
@@ -325,9 +331,51 @@ const App = {
       }
       App.renderThumbnails();
       App.renderAutoDetectStatus();
+      App.renderProgressSummary();
     } catch (err) {
       console.warn(err);
     }
+  },
+
+  setStatusFilter: (filter) => {
+    App.state.statusFilter = filter || "all";
+    document.querySelectorAll("#progressFilters button").forEach((button) => {
+      button.classList.toggle("active", button.dataset.statusFilter === App.state.statusFilter);
+    });
+    App.renderThumbnails();
+  },
+
+  progressCounts: () => {
+    const counts = { total: 0, pending: 0, auto: 0, in_progress: 0, done: 0, needs_review: 0 };
+    (App.state.manifestImages || []).forEach((item) => {
+      const status = ["pending", "auto", "in_progress", "done"].includes(item.status) ? item.status : "pending";
+      counts[status] += 1;
+      counts.total += 1;
+    });
+    counts.needs_review = counts.pending + counts.auto + counts.in_progress;
+    return counts;
+  },
+
+  renderProgressSummary: () => {
+    const counts = App.state.progress?.counts || App.progressCounts();
+    const summary = document.getElementById("progressSummary");
+    if (!summary) return;
+    if (!counts.total) {
+      summary.textContent = "未导入文件夹";
+    } else {
+      summary.innerHTML = `<strong>${counts.done}</strong> / ${counts.total} 已完成；${counts.needs_review} 张仍需处理`;
+    }
+    const report = App.state.progress?.report_files;
+    const reportText = document.getElementById("progressReportText");
+    if (reportText && report) {
+      reportText.textContent = `已生成 ${report.marker}、${report.html} 和 ${report.csv}`;
+    }
+    document.querySelectorAll("#progressFilters button").forEach((button) => {
+      const filter = button.dataset.statusFilter || "all";
+      const count = filter === "all" ? counts.total : counts[filter] || 0;
+      button.textContent = `${App.filterLabel(filter)} ${count}`;
+      button.classList.toggle("active", filter === App.state.statusFilter);
+    });
   },
 
   renderThumbnails: () => {
@@ -350,14 +398,25 @@ const App = {
         { root: strip, rootMargin: "360px" },
       );
     }
-    App.state.manifestImages.forEach((item, index) => {
+    const images = App.filteredManifestImages();
+    if (!images.length) {
+      const empty = document.createElement("div");
+      empty.className = "thumb-empty";
+      empty.textContent = App.state.manifestImages.length ? "当前筛选没有图片" : "导入文件夹后会显示图片状态";
+      strip.appendChild(empty);
+      return;
+    }
+    images.forEach((item, index) => {
       const filename = item.image_path.split("/").pop();
       const thumb = document.createElement("button");
       thumb.type = "button";
       thumb.className = `thumb loading ${filename === App.state.currentFilename ? "active" : ""}`;
       thumb.dataset.filename = filename;
       thumb.title = `${filename} · ${App.statusLabel(item.status)}`;
-      thumb.innerHTML = `<span class="thumb-status ${item.status || "pending"}"></span>`;
+      thumb.innerHTML = `
+        <span class="thumb-status ${item.status || "pending"}"></span>
+        <span class="thumb-label">${App.statusShortLabel(item.status)}</span>
+      `;
       thumb.addEventListener("click", () => App.loadByName(filename));
       strip.appendChild(thumb);
       if (App.state.thumbObserver) {
@@ -366,6 +425,12 @@ const App = {
         App.loadThumbnail(thumb);
       }
     });
+  },
+
+  filteredManifestImages: () => {
+    const filter = App.state.statusFilter || "all";
+    if (filter === "all") return App.state.manifestImages || [];
+    return (App.state.manifestImages || []).filter((item) => (item.status || "pending") === filter);
   },
 
   loadThumbnail: (thumb) => {
@@ -377,10 +442,25 @@ const App = {
   },
 
   statusLabel: (status) => {
-    if (status === "auto") return "自动初标";
-    if (status === "in_progress") return "人工修改";
+    if (status === "auto") return "自动初标待复核";
+    if (status === "in_progress") return "人工修改中";
     if (status === "done") return "已完成";
     if (status === "queued") return "排队中";
+    return "未标注";
+  },
+
+  statusShortLabel: (status) => {
+    if (status === "auto") return "待复核";
+    if (status === "in_progress") return "修改中";
+    if (status === "done") return "完成";
+    return "未标注";
+  },
+
+  filterLabel: (filter) => {
+    if (filter === "all") return "全部";
+    if (filter === "auto") return "待复核";
+    if (filter === "in_progress") return "修改中";
+    if (filter === "done") return "已完成";
     return "未标注";
   },
 
@@ -449,6 +529,7 @@ const App = {
     App.state.selectedConnection = null;
     App.state.pendingConnectionStart = null;
     App.state.manifestImages = [];
+    App.state.progress = null;
     App.state.history = [];
     App.state.historyIndex = -1;
     App.state.transform = { x: 0, y: 0, scale: 1 };
@@ -456,6 +537,7 @@ const App = {
     document.getElementById("warningList").innerHTML = "";
     document.getElementById("connectionList").innerHTML = "";
     document.getElementById("thumbStrip").innerHTML = "";
+    App.renderProgressSummary();
     document.getElementById("selectedConnectionLabel").textContent = "未选中连线";
     document.querySelectorAll(".point-row").forEach((row) => {
       row.classList.add("missing");

@@ -252,6 +252,9 @@ def save_manifest(manifest: Manifest, root: Path = ROOT) -> Path:
         root.mkdir(parents=True, exist_ok=True)
         path = manifest_path(root)
         _atomic_write_json(path, model_to_dict(manifest))
+        from .progress_report import write_progress_reports
+
+        write_progress_reports(root, manifest)
         return path
 
 

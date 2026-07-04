@@ -356,7 +356,8 @@ button:hover,
 .summary-grid div,
 .selected-box,
 .settings-box,
-.connection-box {
+.connection-box,
+.progress-box {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
@@ -368,6 +369,39 @@ button:hover,
   display: grid;
   gap: 8px;
   margin-bottom: 14px;
+}
+
+.progress-box {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.progress-summary {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.progress-summary strong {
+  font-size: 20px;
+}
+
+.filter-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.filter-row button {
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.filter-row button.active {
+  color: white;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .summary-grid span,
@@ -496,6 +530,7 @@ button:hover,
   flex: 0 0 auto;
   position: relative;
   cursor: pointer;
+  overflow: hidden;
 }
 
 .thumb.loading::after {
@@ -522,10 +557,27 @@ button:hover,
   width: 10px;
   height: 10px;
   right: 5px;
-  bottom: 5px;
+  top: 5px;
   border-radius: 50%;
   background: var(--missing);
   border: 1px solid white;
+}
+
+.thumb-label {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  border-radius: 5px;
+  padding: 2px 4px;
+  color: white;
+  background: rgba(24, 32, 38, 0.78);
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .thumb-status.in_progress {
@@ -538,6 +590,12 @@ button:hover,
 
 .thumb-status.done {
   background: var(--manual);
+}
+
+.thumb-empty {
+  min-width: 220px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 dialog {

@@ -20,6 +20,10 @@ retuve-data/
 backups/
 prelabel-report.json
 demo_picture/
+HIP22_STATUS_DONE_*_TODO_*.txt
+HIP22_status_report.html
+HIP22_status_report.csv
+HIP22_SUBMISSION_README.txt
 
 *.zip
 *.log

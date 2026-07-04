@@ -63,6 +63,18 @@
         </section>
 
         <aside class="side-panel review-panel">
+          <div class="progress-box">
+            <div class="settings-title">文件夹进度</div>
+            <div class="progress-summary" id="progressSummary">未导入文件夹</div>
+            <div class="filter-row" id="progressFilters" role="group" aria-label="按标注状态筛选">
+              <button class="active" type="button" data-status-filter="all">全部</button>
+              <button type="button" data-status-filter="pending">未标注</button>
+              <button type="button" data-status-filter="auto">待复核</button>
+              <button type="button" data-status-filter="in_progress">修改中</button>
+              <button type="button" data-status-filter="done">已完成</button>
+            </div>
+            <small id="progressReportText">状态文件会自动生成在当前文件夹中</small>
+          </div>
           <div class="panel-head">
             <div>
               <h2>当前图像</h2>

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from .auto_detect_queue import auto_detect_status, replace_auto_detect_queue
 from .heuristics import estimate_keypoints_from_image
+from .progress_report import build_progress_payload
 from .schema import LANDMARK_DEFS, Annotation, Manifest, create_blank_annotation, ensure_keypoint_template, model_to_dict, normalize_split
 from .storage import (
     annotation_path,
@@ -293,9 +294,11 @@ async def open_folder(request: OpenFolderRequest):
 async def list_annotations():
     root = current_root()
     ensure_dataset_layout(root)
-    payload = model_to_dict(load_manifest(root))
+    manifest = load_manifest(root)
+    payload = model_to_dict(manifest)
     payload["settings"] = load_settings()
     payload["auto_detect"] = auto_detect_status(root)
+    payload["progress"] = build_progress_payload(root, manifest)
     return payload
 
 
