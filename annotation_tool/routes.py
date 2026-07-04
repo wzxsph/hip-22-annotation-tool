@@ -148,7 +148,9 @@ def _auto_annotation_for_image(filename: str, image: Image.Image, *, root: Path,
         result = estimate_keypoints_from_image(image)
         annotation.keypoints = result.keypoints
         annotation.auto_initialization = {
-            "source": "yolo11n-best-side11" if result.model_available else "model-unavailable",
+            "source": result.source,
+            "strategy": result.strategy,
+            "attempts": result.attempts,
             "warnings": result.warnings,
             "created_at": annotation.annotator.created_at,
         }

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageOps
 
 from .paths import resource_path
 from .schema import LANDMARK_DEFS, SIDES, Keypoint, empty_keypoint, key_for, make_keypoint
@@ -17,6 +17,7 @@ SOURCE_NAME = "pose11_side"
 DEFAULT_MODEL_NAME = "yolo11n-best.pt"
 DEFAULT_CONFIDENCE = 0.25
 DEFAULT_IMGSZ = 800
+DEFAULT_MIN_VISIBLE_KEYPOINTS = 6
 
 
 @dataclass(frozen=True)
@@ -24,11 +25,18 @@ class AutoAnnotationResult:
     keypoints: Dict[str, Keypoint]
     warnings: list[str]
     model_available: bool
+    source: str = "model-unavailable"
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+    strategy: str = ""
 
     @property
     def retuve_available(self) -> bool:
         """Backward-compatible alias for older route code/tests."""
         return self.model_available
+
+    @property
+    def visible_count(self) -> int:
+        return sum(1 for point in self.keypoints.values() if point.visible and point.x is not None and point.y is not None)
 
 
 _model_lock = threading.Lock()
@@ -39,27 +47,88 @@ def estimate_keypoints_from_image(image: Image.Image) -> AutoAnnotationResult:
     image = image.convert("RGB")
     warnings: list[str] = []
     keypoints = _empty_template()
+    attempts: list[dict[str, Any]] = []
 
     model_path = model_path_from_env()
     if not model_path.exists():
         warnings.append(f"Model unavailable: {model_path}")
-        return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=False)
+        return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=False, source="model-unavailable")
 
     try:
         model = _load_model(model_path)
-        predictions = _run_model(model, image)
     except ImportError as exc:
         warnings.append(f"Ultralytics unavailable: {exc}")
-        return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=False)
+        return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=False, source="model-unavailable")
     except Exception as exc:
-        warnings.append(f"yolo11n-best prediction failed: {exc}")
-        return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=False)
+        warnings.append(f"yolo11n-best load failed: {exc}")
+        return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=False, source="model-unavailable")
 
-    decoded = decode_side11_result(predictions[0] if predictions else None)
-    if not any(point.visible for point in decoded.values()):
-        warnings.append("yolo11n-best returned no visible side11 keypoints.")
-    keypoints.update(decoded)
-    return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=True)
+    min_visible = _min_visible_keypoints()
+    best_decoded = keypoints
+    best_visible = 0
+    failed_attempts = 0
+
+    for attempt in _prediction_attempts():
+        attempt_image = _preprocess_for_attempt(image, str(attempt["preprocess"]))
+        record = {
+            "strategy": attempt["name"],
+            "imgsz": attempt["imgsz"],
+            "conf": attempt["conf"],
+            "preprocess": attempt["preprocess"],
+            "visible_count": 0,
+            "success": False,
+        }
+        try:
+            predictions = _run_model(model, attempt_image, imgsz=int(attempt["imgsz"]), conf=float(attempt["conf"]))
+            decoded = decode_side11_result(predictions[0] if predictions else None)
+        except Exception as exc:
+            failed_attempts += 1
+            record["error"] = str(exc)
+            attempts.append(record)
+            continue
+
+        visible_count = _visible_count(decoded)
+        record["visible_count"] = visible_count
+        record["success"] = visible_count >= min_visible
+        attempts.append(record)
+        if visible_count > best_visible:
+            best_decoded = decoded
+            best_visible = visible_count
+        if visible_count >= min_visible:
+            keypoints.update(decoded)
+            return AutoAnnotationResult(
+                keypoints=keypoints,
+                warnings=warnings,
+                model_available=True,
+                source="yolo11n-best-side11",
+                attempts=attempts,
+                strategy=str(attempt["name"]),
+            )
+
+    if best_visible > 0:
+        warnings.append(
+            f"yolo11n-best returned only {best_visible} visible side11 keypoints; "
+            f"need at least {min_visible}, keeping blank manual template."
+        )
+    else:
+        warnings.append("yolo11n-best returned no visible side11 keypoints after fallback attempts.")
+    if failed_attempts and failed_attempts == len(attempts):
+        warnings.append("All yolo11n-best prediction attempts failed.")
+        return AutoAnnotationResult(
+            keypoints=keypoints,
+            warnings=warnings,
+            model_available=False,
+            source="model-unavailable",
+            attempts=attempts,
+        )
+    return AutoAnnotationResult(
+        keypoints=keypoints,
+        warnings=warnings,
+        model_available=True,
+        source="model-no-result",
+        attempts=attempts,
+        strategy="no-result",
+    )
 
 
 def model_path_from_env() -> Path:
@@ -71,6 +140,60 @@ def model_path_from_env() -> Path:
 
 def _empty_template() -> Dict[str, Keypoint]:
     return {key_for(side, item.name): empty_keypoint(side, item) for side in SIDES for item in LANDMARK_DEFS}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    return int(value)
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    return float(value)
+
+
+def _fallback_enabled() -> bool:
+    value = os.environ.get("HIP22_AUTO_FALLBACK", os.environ.get("HIP22_FALLBACK", "1")).strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _min_visible_keypoints() -> int:
+    return max(1, _env_int("HIP22_MIN_VISIBLE", DEFAULT_MIN_VISIBLE_KEYPOINTS))
+
+
+def _prediction_attempts() -> list[dict[str, int | float | str]]:
+    first = {
+        "name": "default",
+        "imgsz": _env_int("HIP22_IMGSZ", DEFAULT_IMGSZ),
+        "conf": _env_float("HIP22_CONF", DEFAULT_CONFIDENCE),
+        "preprocess": "none",
+    }
+    if not _fallback_enabled():
+        return [first]
+    return [
+        first,
+        {"name": "large_1024_low_conf", "imgsz": 1024, "conf": 0.15, "preprocess": "none"},
+        {"name": "large_1280_low_conf", "imgsz": 1280, "conf": 0.15, "preprocess": "none"},
+        {"name": "low_conf", "imgsz": DEFAULT_IMGSZ, "conf": 0.05, "preprocess": "none"},
+        {"name": "contrast_1024_low_conf", "imgsz": 1024, "conf": 0.15, "preprocess": "autocontrast"},
+    ]
+
+
+def _preprocess_for_attempt(image: Image.Image, preprocess: str) -> Image.Image:
+    if preprocess != "autocontrast":
+        return image
+    gray = ImageOps.grayscale(image)
+    contrasted = ImageOps.autocontrast(gray)
+    contrasted = ImageEnhance.Contrast(contrasted).enhance(1.35)
+    return Image.merge("RGB", (contrasted, contrasted, contrasted))
+
+
+def _visible_count(keypoints: Dict[str, Keypoint]) -> int:
+    return sum(1 for point in keypoints.values() if point.visible and point.x is not None and point.y is not None)
 
 
 def _preferred_device() -> str:
@@ -100,9 +223,7 @@ def _load_model(model_path: Path) -> Any:
         return model
 
 
-def _run_model(model: Any, image: Image.Image) -> list[Any]:
-    imgsz = int(os.environ.get("HIP22_IMGSZ", DEFAULT_IMGSZ))
-    conf = float(os.environ.get("HIP22_CONF", DEFAULT_CONFIDENCE))
+def _run_model(model: Any, image: Image.Image, *, imgsz: int, conf: float) -> list[Any]:
     return model.predict(
         source=np.asarray(image),
         imgsz=imgsz,
