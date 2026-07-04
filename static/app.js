@@ -44,6 +44,8 @@ const App = {
     manifestImages: [],
     progress: null,
     statusFilter: "all",
+    importReport: null,
+    lastSave: null,
     autosaveTimer: null,
     thumbObserver: null,
     autoDetectPollTimer: null,
@@ -307,10 +309,13 @@ const App = {
       const data = await App.readJsonResponse(res, "import failed");
       App.state.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
       App.state.autoDetectStatus = data.auto_detect || null;
+      App.state.importReport = data.import_report || null;
       App.clearWorkspaceView("文件夹已导入，自动识别将在后台进行");
+      App.state.importReport = data.import_report || null;
       dialog.close();
       await App.loadManifest();
       App.startAutoDetectPolling();
+      App.renderImportReport();
       App.setStatus(`文件夹已导入：${data.total || 0} 张，后台识别 ${data.queued || 0} 张`);
     } catch (err) {
       error.textContent = err.message;
@@ -376,6 +381,52 @@ const App = {
       button.textContent = `${App.filterLabel(filter)} ${count}`;
       button.classList.toggle("active", filter === App.state.statusFilter);
     });
+    App.renderSubmissionCheck(counts);
+    App.renderSaveInfo();
+    App.renderImportReport();
+  },
+
+  renderSubmissionCheck: (counts = null) => {
+    const target = document.getElementById("submissionCheck");
+    if (!target) return;
+    const nextCounts = counts || App.state.progress?.counts || App.progressCounts();
+    target.classList.remove("ready", "warning");
+    if (!nextCounts.total) {
+      target.textContent = "导入文件夹后会显示提交检查";
+      return;
+    }
+    if (nextCounts.needs_review === 0) {
+      target.classList.add("ready");
+      target.textContent = "提交检查通过：全部图片已完成。保存后将整个文件夹直接发送给项目团队。";
+      return;
+    }
+    target.classList.add("warning");
+    target.textContent = `提交前仍需处理 ${nextCounts.needs_review} 张：未标注 ${nextCounts.pending}，待复核 ${nextCounts.auto}，修改中 ${nextCounts.in_progress}。`;
+  },
+
+  renderSaveInfo: () => {
+    const target = document.getElementById("saveInfoText");
+    if (!target) return;
+    if (!App.state.currentFilename) {
+      target.textContent = "尚未打开当前图片";
+      return;
+    }
+    if (!App.state.lastSave || App.state.lastSave.filename !== App.state.currentFilename) {
+      target.textContent = "当前图片修改后请保存；保存会写入 JSON 和同名 YOLO txt";
+      return;
+    }
+    target.textContent = `最近保存 ${App.state.lastSave.timeText}；JSON：${App.state.lastSave.annotationPath}；TXT：${App.state.lastSave.labelPath}`;
+  },
+
+  renderImportReport: () => {
+    const target = document.getElementById("importReportText");
+    if (!target) return;
+    const report = App.state.importReport;
+    if (!report?.warnings?.length) {
+      target.textContent = "命名混乱或目录嵌套时，可先发给项目团队整理";
+      return;
+    }
+    target.textContent = `导入提示：${report.warnings.slice(0, 3).join("；")}`;
   },
 
   renderThumbnails: () => {
@@ -530,6 +581,8 @@ const App = {
     App.state.pendingConnectionStart = null;
     App.state.manifestImages = [];
     App.state.progress = null;
+    App.state.importReport = null;
+    App.state.lastSave = null;
     App.state.history = [];
     App.state.historyIndex = -1;
     App.state.transform = { x: 0, y: 0, scale: 1 };
@@ -617,12 +670,14 @@ const App = {
     App.state.selectedConnection = null;
     App.state.pendingConnectionStart = null;
     App.state.activePointKey = "left_acetabular_outer";
+    App.state.lastSave = null;
     document.getElementById("annotatorInput").value = annotation.annotator?.user_id || App.state.settings.annotator || "default";
     document.getElementById("imageTitle").textContent = annotation.image.filename;
     App.loadImage(annotation.image_url || `/api/annotation/image/${encodeURIComponent(annotation.image.filename)}`);
     App.resetHistory();
     App.refreshAll();
     App.renderWarnings();
+    App.renderSaveInfo();
   },
 
   loadImage: (src) => {
@@ -652,9 +707,16 @@ const App = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(App.state.annotation),
       });
-      await App.readJsonResponse(res, "save failed");
+      const payload = await App.readJsonResponse(res, "save failed");
+      App.state.lastSave = {
+        filename: App.state.annotation.image.filename,
+        timeText: new Date().toLocaleTimeString(),
+        annotationPath: payload.annotation_path || "annotations",
+        labelPath: payload.label_path || "同名 txt",
+      };
       App.setStatus(options.silent ? "已自动保存" : "已保存");
       if (!options.skipManifest) await App.loadManifest();
+      App.renderSaveInfo();
       return true;
     } catch (err) {
       App.setStatus(`保存失败: ${err.message}`);

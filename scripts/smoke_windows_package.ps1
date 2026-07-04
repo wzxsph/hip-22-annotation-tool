@@ -1,5 +1,6 @@
 param(
     [string]$ZipPath = "",
+    [string]$DemoImagePath = "",
     [int]$Port = 8123,
     [switch]$SkipModelFlow
 )
@@ -96,9 +97,17 @@ try {
         }
 
         if (-not $SkipModelFlow) {
-            $demoImage = Get-ChildItem -Path (Join-Path $ProjectRoot "demo_picture") -Filter "*.jpg" | Select-Object -First 1
+            if (-not $DemoImagePath -and $env:HIP22_SMOKE_IMAGE) {
+                $DemoImagePath = $env:HIP22_SMOKE_IMAGE
+            }
+            $demoImage = $null
+            if ($DemoImagePath) {
+                $demoImage = Get-Item -LiteralPath $DemoImagePath
+            } elseif (Test-Path (Join-Path $ProjectRoot "demo_picture")) {
+                $demoImage = Get-ChildItem -Path (Join-Path $ProjectRoot "demo_picture") -Filter "*.jpg" | Select-Object -First 1
+            }
             if (-not $demoImage) {
-                throw "No demo .jpg found under demo_picture. Pass -SkipModelFlow to test HTTP only."
+                throw "No demo image found. Pass -DemoImagePath with an MTDDH/public sample, set HIP22_SMOKE_IMAGE, or pass -SkipModelFlow to test HTTP only."
             }
             Copy-Item -LiteralPath $demoImage.FullName -Destination (Join-Path $DatasetRoot $demoImage.Name)
 

@@ -112,6 +112,103 @@ def _scan_workspace_images(root: Path) -> list[Path]:
     return images
 
 
+def _relative_path_text(path: Path, root: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _is_internal_artifact(path: Path, root: Path) -> bool:
+    try:
+        relative = path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    parts = relative.parts
+    if parts and parts[0] in {"annotations", "labels", "splits", "images"}:
+        return True
+    name = path.name
+    return (
+        name in {"manifest.json", "data.yaml", "tool-settings.json", "HIP22_status_report.html", "HIP22_status_report.csv"}
+        or name == "HIP22_SUBMISSION_README.txt"
+        or name.startswith("HIP22_STATUS_DONE_")
+    )
+
+
+def _limited_paths(paths: list[Path], root: Path, limit: int = 20) -> list[str]:
+    return [_relative_path_text(path, root) for path in paths[:limit]]
+
+
+def _import_folder_report(root: Path, selected_images: list[Path]) -> dict:
+    selected = {path.resolve() for path in selected_images}
+    supported_images: list[Path] = []
+    unsupported_files: list[Path] = []
+    unreadable_files: list[Path] = []
+    warnings: list[str] = []
+    try:
+        all_files = [path for path in root.rglob("*") if path.is_file()]
+    except Exception as exc:
+        return {
+            "warnings": [f"无法完整扫描文件夹：{exc}"],
+            "nested_images": [],
+            "duplicate_names": [],
+            "unsupported_files": [],
+            "unreadable_files": [],
+            "messy_names": [],
+        }
+
+    for path in all_files:
+        if _is_internal_artifact(path, root):
+            continue
+        if _is_image_file(path):
+            supported_images.append(path)
+            continue
+        if path.suffix.lower() not in {".txt", ".json", ".yaml", ".yml", ".csv", ".html"}:
+            unsupported_files.append(path)
+
+    for path in selected_images:
+        try:
+            with open(path, "rb") as handle:
+                handle.read(1)
+        except OSError:
+            unreadable_files.append(path)
+
+    nested_images = [path for path in supported_images if path.resolve() not in selected]
+    by_name: dict[str, list[Path]] = {}
+    for path in supported_images:
+        by_name.setdefault(path.name.lower(), []).append(path)
+    duplicate_names = [
+        {"filename": paths[0].name, "paths": _limited_paths(paths, root)}
+        for paths in by_name.values()
+        if len(paths) > 1
+    ][:20]
+    messy_names = [
+        {"filename": path.name, "reason": "文件名包含空格或过长，建议由项目团队统一整理"}
+        for path in selected_images
+        if any(char.isspace() for char in path.stem) or len(path.stem) > 80
+    ][:20]
+
+    if nested_images:
+        warnings.append(f"发现 {len(nested_images)} 张图片在嵌套目录中，当前不会导入；请先整理到同一个文件夹。")
+    if duplicate_names:
+        warnings.append(f"发现 {len(duplicate_names)} 组重复文件名，建议整理后再标注，避免标签对应混乱。")
+    if unsupported_files:
+        warnings.append(f"发现 {len(unsupported_files)} 个非图片/不支持文件。")
+    if unreadable_files:
+        warnings.append(f"发现 {len(unreadable_files)} 张图片无法读取，请联系项目团队。")
+    if messy_names:
+        warnings.append(f"发现 {len(messy_names)} 个文件名可能需要整理。")
+
+    return {
+        "warnings": warnings,
+        "nested_images": _limited_paths(nested_images, root),
+        "duplicate_names": duplicate_names,
+        "unsupported_files": _limited_paths(unsupported_files, root),
+        "unreadable_files": _limited_paths(unreadable_files, root),
+        "messy_names": messy_names,
+    }
+
+
 def _existing_annotation_for_image(
     image_path: Path,
     *,
@@ -252,6 +349,7 @@ async def open_folder(request: OpenFolderRequest):
     image_files = _scan_workspace_images(root)
     if not image_files:
         raise HTTPException(status_code=400, detail="No supported image files found in the folder.")
+    import_report = _import_folder_report(root, image_files)
 
     split = normalize_split(request.split)
     save_manifest(Manifest(), root)
@@ -289,6 +387,7 @@ async def open_folder(request: OpenFolderRequest):
         "total": len(manifest.images),
         "settings": settings,
         "auto_detect": queue_status,
+        "import_report": import_report,
     }
 
 

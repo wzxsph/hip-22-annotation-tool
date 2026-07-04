@@ -20,7 +20,7 @@
           </label>
           <button id="btnFolder" type="button">导入文件夹</button>
           <button id="btnSave" type="button">保存</button>
-          <button id="btnExportYolo" type="button" title="团队整理或训练使用，医生提交时直接发送整个文件夹即可">导出 YOLO（团队）</button>
+          <button id="btnExportYolo" type="button" title="团队整理或训练使用；医生提交时直接发送整个文件夹即可">团队导出</button>
           <button id="btnUndo" type="button" aria-label="撤销">↶</button>
           <button id="btnRedo" type="button" aria-label="重做">↷</button>
         </div>
@@ -66,6 +66,7 @@
           <div class="progress-box">
             <div class="settings-title">文件夹进度</div>
             <div class="progress-summary" id="progressSummary">未导入文件夹</div>
+            <div class="submission-check" id="submissionCheck">导入文件夹后会显示提交检查</div>
             <div class="filter-row" id="progressFilters" role="group" aria-label="按标注状态筛选">
               <button class="active" type="button" data-status-filter="all">全部</button>
               <button type="button" data-status-filter="pending">未标注</button>
@@ -73,6 +74,8 @@
               <button type="button" data-status-filter="in_progress">修改中</button>
               <button type="button" data-status-filter="done">已完成</button>
             </div>
+            <small id="saveInfoText">尚未保存当前图片</small>
+            <small id="importReportText">命名混乱或目录嵌套时，可先发给项目团队整理</small>
             <small id="progressReportText">状态文件会自动生成在当前文件夹中</small>
           </div>
           <div class="panel-head">
@@ -150,6 +153,9 @@
           <button id="btnPickFolder" type="button">选择</button>
         </div>
         <p id="folderError" class="dialog-error"></p>
+        <p class="folder-help">
+          建议所有待标注图片放在同一个文件夹。若命名混乱、嵌套很多、无法导入或不确定怎么整理，可先把照片发给项目团队整理后再标注。
+        </p>
         <div class="dialog-actions">
           <button value="cancel" type="submit">取消</button>
           <button id="btnConfirmFolder" value="default" type="button">导入</button>

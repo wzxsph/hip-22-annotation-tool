@@ -386,6 +386,24 @@ button:hover,
   font-size: 20px;
 }
 
+.submission-check {
+  border-left: 3px solid var(--accent);
+  background: white;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.submission-check.ready {
+  border-left-color: var(--manual);
+  background: #ebfbee;
+}
+
+.submission-check.warning {
+  border-left-color: var(--estimated);
+  background: #fff8e8;
+}
+
 .filter-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -457,6 +475,16 @@ button:hover,
   overflow-wrap: anywhere;
   white-space: normal;
   text-overflow: ellipsis;
+}
+
+#saveInfoText,
+#importReportText,
+#progressReportText {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .connection-box strong {
@@ -632,6 +660,13 @@ dialog::backdrop {
   margin: 0;
   color: var(--danger);
   font-size: 12px;
+}
+
+.folder-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .dialog-actions {

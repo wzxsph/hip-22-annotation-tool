@@ -70,6 +70,32 @@ def test_open_folder_imports_existing_sidecar_yolo_label_without_auto_overwrite(
         save_settings(old_settings)
 
 
+def test_open_folder_returns_hospital_import_warnings(tmp_path):
+    old_settings = load_settings()
+    client = TestClient(app)
+    workspace = tmp_path / "workspace"
+    nested = workspace / "nested"
+    nested.mkdir(parents=True)
+    _write_image(workspace / "duplicate.png")
+    _write_image(workspace / "case one.png")
+    _write_image(nested / "duplicate.png")
+    (workspace / "scan.dcm").write_bytes(b"not-supported")
+    try:
+        save_settings({"auto_detect": False})
+
+        res = client.post("/api/annotation/open-folder", json={"folder_path": str(workspace)})
+
+        assert res.status_code == 200
+        report = res.json()["import_report"]
+        assert report["nested_images"] == ["nested/duplicate.png"]
+        assert report["duplicate_names"][0]["filename"] == "duplicate.png"
+        assert report["unsupported_files"] == ["scan.dcm"]
+        assert report["messy_names"][0]["filename"] == "case one.png"
+        assert report["warnings"]
+    finally:
+        save_settings(old_settings)
+
+
 def test_list_recovers_from_corrupt_manifest_without_internal_server_error(tmp_path):
     old_settings = load_settings()
     client = TestClient(app)
