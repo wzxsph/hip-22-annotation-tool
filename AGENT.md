@@ -7,6 +7,7 @@ This repository is the standalone public annotation tool. Keep it clean, small, 
 - This repo contains only the FastAPI + Canvas annotation app, tests, docs, screenshots, and the bundled `models/yolo11n-best.pt` weight.
 - Do not import or copy code from `reference/hip_demo`, `reference/retuve-yolo-plugin`, or the parent training project.
 - Do not add hospital private data, raw patient data, MTDDH original images, training folders, local workspaces, or generated annotation batches.
+- Generated Windows ZIPs belong in GitHub Release assets, not in git history.
 
 ## Runtime Model
 
@@ -15,6 +16,15 @@ This repository is the standalone public annotation tool. Keep it clean, small, 
 - Users may override the model with `HIP22_MODEL_PATH`.
 - Device selection uses `HIP22_DEVICE` or `HIP22_MODEL_DEVICE`; unset means CUDA first, then CPU.
 - If the model or `ultralytics` is unavailable, return a blank 22-point template with warnings. Never raise a 500 just because inference is unavailable.
+- The current-image `Auto Detect` UI action should preserve existing manual points and may use partial model results as review candidates.
+
+## Git LFS And Download ZIP
+
+- `models/yolo11n-best.pt` is tracked with Git LFS through `.gitattributes`.
+- A normal `git clone` works only when Git LFS is installed and `git lfs pull` has completed.
+- GitHub's source-code ZIP is not a reliable delivery method for the model file; it may omit the real model binary or include only a pointer.
+- Before packaging or testing inference, verify that `models/yolo11n-best.pt` is a large binary file and does not begin with `version https://git-lfs.github.com/spec/v1`.
+- For hospital users, point them to the Windows Release ZIP, which should include the model and runtime dependencies.
 
 ## Annotation Contract
 
@@ -32,7 +42,8 @@ Do not commit:
 - `images/`, `annotations/`, `labels/`, `splits/`
 - `manifest.json`, `tool-settings.json`, `data.yaml`
 - `retuve-data/`, `backups/`, `prelabel-report.json`
-- raw MTDDH images or hospital/private image folders
+- `demo_picture/`, `open-hip-dysplasia-data/`, raw MTDDH images, or hospital/private image folders
+- `build/`, `dist/`, PyInstaller work folders, generated ZIPs, or smoke-test runtime output
 
 The model file is intentionally tracked with Git LFS through `.gitattributes`.
 
@@ -50,6 +61,10 @@ Before publishing:
 ```bash
 uv run pytest
 uv run python -m compileall annotation_tool
+node --check static/app.js
 find . -maxdepth 3 \( -name '.venv' -o -name 'manifest.json' -o -name 'tool-settings.json' -o -name 'annotations' -o -name 'images' -o -name 'labels' \) -print
 git lfs ls-files
+git diff --cached --name-only -- '*.jpg' '*.jpeg' '*.png' '*.bmp' '*.tif' '*.tiff' '*.webp'
 ```
+
+For Windows delivery, also run the generated `dist/smoke_test.ps1` outside the source tree when practical, then upload only the ZIP as a GitHub Release asset.

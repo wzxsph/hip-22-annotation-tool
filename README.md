@@ -12,6 +12,8 @@ This project is a research annotation aid. It is not a medical device, does not 
 - Loads a local image folder as a workspace.
 - Preserves existing JSON or YOLO sidecar labels and never overwrites reviewed annotations during auto-detection.
 - Uses the bundled `models/yolo11n-best.pt` weight by default for model-assisted initialization.
+- Provides an `Auto Detect` button for retrying the current image without discarding manual corrections.
+- Writes visible workspace progress files so a folder can show which images are unfinished, auto-initialized, in progress, or complete.
 - Saves complete annotation JSON to `annotations/<image_stem>.json`.
 - Saves YOLO Pose sidecar labels to `<image_stem>.txt` beside each image.
 - Supports zoom, pan, drag-to-correct, missing-point marking, undo/redo, manual connections, and keyboard image navigation.
@@ -26,12 +28,29 @@ Demo screenshots use pelvic X-ray examples derived from the MTDDH dataset, licen
 |---|---|---|
 | ![Workspace overview](docs/screenshots/workspace-overview.png) | ![Point editing](docs/screenshots/point-editing.png) | ![YOLO export](docs/screenshots/export-panel.png) |
 
+## Download For Hospital Use
+
+Hospital users should download the Windows CPU ZIP from [GitHub Releases](https://github.com/wzxsph/hip-22-annotation-tool/releases), unzip it locally, and run `Hip22AnnotationTool.exe` or `Run-Hip22.bat`.
+
+Do not use GitHub's `Code > Download ZIP` for hospital delivery. GitHub source ZIP downloads do not reliably include Git LFS model binaries, so `models/yolo11n-best.pt` may be missing or replaced by a small pointer file. In that state the app can still open, but model-assisted initialization will report that the model is unavailable.
+
+For developers cloning the repository, install Git LFS before or immediately after cloning:
+
+```bash
+git lfs install
+git clone https://github.com/wzxsph/hip-22-annotation-tool.git
+cd hip-22-annotation-tool
+git lfs pull
+```
+
+To verify that the model is present, `models/yolo11n-best.pt` should be a large binary file, not a tiny text file beginning with `version https://git-lfs.github.com/spec/v1`.
+
 ## Install
 
 Python 3.10-3.12 is recommended. The bundled model uses the `ultralytics` package for inference.
 
 ```bash
-git clone https://github.com/<your-name>/hip-22-annotation-tool.git
+git clone https://github.com/wzxsph/hip-22-annotation-tool.git
 cd hip-22-annotation-tool
 
 uv venv --python python3.12
@@ -196,6 +215,7 @@ Links:
 ```bash
 uv run pytest
 uv run python -m compileall annotation_tool
+node --check static/app.js
 ```
 
 Before publishing a public repository, check that runtime data is absent:
@@ -203,4 +223,7 @@ Before publishing a public repository, check that runtime data is absent:
 ```bash
 find . -maxdepth 3 \( -name '.venv' -o -name 'manifest.json' -o -name 'tool-settings.json' -o -name 'annotations' -o -name 'images' -o -name 'labels' \) -print
 git lfs ls-files
+git diff --cached --name-only -- '*.jpg' '*.jpeg' '*.png' '*.bmp' '*.tif' '*.tiff' '*.webp'
 ```
+
+Windows ZIPs, build folders, local demo images, MTDDH source images, and hospital/private datasets should stay out of git. Attach generated Windows packages to GitHub Releases instead.
