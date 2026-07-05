@@ -385,11 +385,13 @@ button:hover,
   z-index: 20;
   display: none;
   min-width: 220px;
+  max-width: 280px;
+  max-height: min(520px, calc(100% - 16px));
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .context-title {

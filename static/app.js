@@ -147,6 +147,7 @@ const App = {
     document.getElementById("autoSaveToggle").addEventListener("change", App.saveSettings);
     document.getElementById("annotatorInput").addEventListener("change", App.saveSettings);
     document.getElementById("btnSave").addEventListener("click", () => App.saveAnnotation());
+    document.getElementById("btnClearPoints").addEventListener("click", App.clearCurrentImagePoints);
     document.getElementById("btnAutoDetect").addEventListener("click", App.handleAutoDetectCurrent);
     document.getElementById("btnAutoDetectEnhanced").addEventListener("click", () => App.handleAutoDetectCurrent({ useEnhanced: true }));
     document.getElementById("btnShortcutHelp").addEventListener("click", App.showShortcuts);
@@ -1470,6 +1471,36 @@ const App = {
     App.scheduleAutosave();
   },
 
+  clearCurrentImagePoints: () => {
+    if (!App.state.annotation?.keypoints) return;
+    const visibleCount = Object.values(App.state.annotation.keypoints).filter(App.pointIsVisible).length;
+    if (!visibleCount) {
+      App.setStatus("当前图片没有可清空的关键点");
+      return;
+    }
+    if (!window.confirm(`确定清空当前图片的 ${visibleCount} 个已标关键点吗？`)) return;
+
+    App.pushHistory();
+    const annotator = document.getElementById("annotatorInput").value.trim() || "default";
+    Object.values(App.state.annotation.keypoints).forEach((point) => {
+      point.x = null;
+      point.y = null;
+      point.visible = false;
+      point.visibility = 0;
+      point.source = "manual";
+      point.confidence = 0;
+      point.updated_at = new Date().toISOString();
+      point.annotator = annotator;
+    });
+    App.state.selectedPoint = null;
+    App.state.pendingConnectionStart = null;
+    App.refreshAll();
+    App.pushHistory();
+    App.scheduleMeasurementCompute();
+    App.scheduleAutosave();
+    App.setStatus("已清空当前图片的全部关键点");
+  },
+
   addConnection: (pointA, pointB) => {
     if (!pointA || !pointB || pointA === pointB) return;
     App.pushHistory();
@@ -1717,32 +1748,33 @@ const App = {
     if (!App.state.image || !App.state.annotation) return;
     const pos = App.mousePos(event);
     App.state.contextImagePos = App.toImageCoords(pos.x, pos.y);
-    const side = App.state.contextImagePos.x > App.state.image.width / 2 ? "left" : "right";
-    App.showContextMenu(pos.x, pos.y, side);
+    App.showContextMenu(pos.x, pos.y);
   },
 
-  showContextMenu: (x, y, side) => {
+  showContextMenu: (x, y) => {
     const menu = document.getElementById("contextMenu");
     const items = document.getElementById("contextItems");
-    const sideText = side === "left" ? "图像左侧" : "图像右侧";
-    document.getElementById("contextTitle").textContent = sideText;
+    const sideLabels = { left: "left", right: "right" };
+    document.getElementById("contextTitle").textContent = "选择点位";
     items.innerHTML = "";
-    App.state.schema.landmarks.forEach((landmark) => {
-      const key = App.keyFor(side, landmark.name);
-      const point = App.state.annotation.keypoints[key];
-      const item = document.createElement("div");
-      item.className = "context-item";
-      item.innerHTML = `<span>#${landmark.number} ${landmark.label_zh}</span><small>${App.pointIsVisible(point) ? "已标" : ""}</small>`;
-      item.addEventListener("click", (event) => {
-        event.stopPropagation();
-        App.placePoint(key, App.state.contextImagePos);
-        App.hideContextMenu();
+    App.state.schema.sides.forEach((side) => {
+      App.state.schema.landmarks.forEach((landmark) => {
+        const key = App.keyFor(side, landmark.name);
+        const point = App.state.annotation.keypoints[key];
+        const item = document.createElement("div");
+        item.className = "context-item";
+        item.innerHTML = `<span>${sideLabels[side] || side} #${landmark.number} ${landmark.label_zh}</span><small>${App.pointIsVisible(point) ? "已标" : ""}</small>`;
+        item.addEventListener("click", (event) => {
+          event.stopPropagation();
+          App.placePoint(key, App.state.contextImagePos);
+          App.hideContextMenu();
+        });
+        items.appendChild(item);
       });
-      items.appendChild(item);
     });
     const wrap = document.getElementById("canvasWrap").getBoundingClientRect();
-    menu.style.left = `${App.clamp(x, 8, wrap.width - 230)}px`;
-    menu.style.top = `${App.clamp(y, 8, wrap.height - 360)}px`;
+    menu.style.left = `${App.clamp(x, 8, wrap.width - 250)}px`;
+    menu.style.top = `${App.clamp(y, 8, wrap.height - 520)}px`;
     menu.style.display = "block";
   },
 

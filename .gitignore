@@ -26,6 +26,8 @@ HIP22_status_report.html
 HIP22_status_report.csv
 HIP22_SUBMISSION_README.txt
 
+learn/
+
 *.zip
 *.log
 *.tmp

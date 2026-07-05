@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>22 点髋关节 X 光标注</title>
-    <link rel="stylesheet" href="/static/style.css?v=shenton-intersection-1" />
+    <link rel="stylesheet" href="/static/style.css?v=clear-points-context-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -20,6 +20,7 @@
           </label>
           <button id="btnFolder" type="button">导入文件夹</button>
           <button id="btnSave" type="button">保存</button>
+          <button id="btnClearPoints" type="button" title="清空当前图片的 22 个关键点，不影响 Shenton 曲线、ROI 或扫描校正">清空点位</button>
           <button id="btnAutoDetect" type="button" title="用原图对当前图片重新识别；保留已经人工修改的点">原图识别</button>
           <button id="btnAutoDetectEnhanced" type="button" title="用增强预览图识别当前图片；仅辅助识别，不覆盖原图">增强识别</button>
           <button id="btnShortcutHelp" type="button" title="查看快捷键">快捷键</button>
@@ -268,6 +269,6 @@
       </form>
     </dialog>
 
-    <script src="/static/app.js?v=roi-priority-1"></script>
+    <script src="/static/app.js?v=clear-points-context-1"></script>
   </body>
 </html>
