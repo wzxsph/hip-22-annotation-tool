@@ -4,16 +4,21 @@ import io
 import time
 import zipfile
 from pathlib import Path
-from typing import Optional, Set
+from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from PIL import Image, ImageOps
+from PIL import Image
 from pydantic import BaseModel
 
 from .auto_detect_queue import auto_detect_status, replace_auto_detect_queue
-from .heuristics import estimate_keypoints_from_image
+from .auto_detection import estimate_keypoints_with_preprocessing
+from .dicom_utils import is_dicom_path
+from .image_io import is_supported_image_path, read_supported_image
+from .measurements import compute_measurements
 from .progress_report import build_progress_payload
+from .render_cache import cached_rendered_png
 from .schema import LANDMARK_DEFS, Annotation, Manifest, create_blank_annotation, ensure_keypoint_template, model_to_dict, normalize_split
 from .storage import (
     annotation_path,
@@ -33,10 +38,8 @@ from .storage import (
     upsert_manifest_image,
     label_path,
 )
+from .template_points import apply_template_fallback, visible_keypoint_count
 from .yolo_export import annotation_to_yolo_text, data_yaml_text
-
-
-IMAGE_EXTENSIONS: Set[str] = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}
 
 router = APIRouter(prefix="/api/annotation", tags=["annotation"])
 
@@ -61,10 +64,13 @@ class AutoDetectImageRequest(BaseModel):
     filename: str
     preserve_manual: bool = True
     include_partial: bool = True
+    use_enhanced: bool = False
+    use_roi: bool = True
+    use_scan: bool = True
 
 
 def _is_image_file(path: Path) -> bool:
-    return path.suffix.lower() in IMAGE_EXTENSIONS
+    return is_supported_image_path(path)
 
 
 def _safe_filename(filename: str | None) -> str:
@@ -74,24 +80,31 @@ def _safe_filename(filename: str | None) -> str:
     return name
 
 
-def _read_image_bytes(content: bytes) -> Image.Image:
+def _read_image_record(path: Path) -> tuple[Image.Image, dict]:
     try:
-        image = Image.open(io.BytesIO(content))
-        image = ImageOps.exif_transpose(image)
-        image.load()
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Unable to read image file.") from exc
-    return image.convert("RGB")
-
-
-def _read_image_path(path: Path) -> Image.Image:
-    try:
-        image = Image.open(path)
-        image = ImageOps.exif_transpose(image)
-        image.load()
+        return read_supported_image(path)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Unable to read image: {path.name}") from exc
-    return image.convert("RGB")
+
+
+def _apply_image_metadata(annotation: Annotation, metadata: dict) -> Annotation:
+    for key in (
+        "source_format",
+        "pixel_spacing_mm",
+        "pixel_spacing_row_mm",
+        "pixel_spacing_col_mm",
+        "pixel_spacing_source",
+        "dicom_warnings",
+    ):
+        if key in metadata:
+            setattr(annotation.image, key, metadata[key])
+    return annotation
+
+
+def _image_url_for_path(image_path: Path) -> str:
+    stat = image_path.stat()
+    filename = quote(image_path.name)
+    return f"/api/annotation/image/{filename}?source_v={stat.st_mtime_ns}-{stat.st_size}"
 
 
 def _split_from_image_path(path: Path) -> str:
@@ -116,6 +129,17 @@ def _scan_workspace_images(root: Path) -> list[Path]:
             seen.add(resolved)
             images.append(resolved)
     return images
+
+
+def _readable_image_files(paths: list[Path]) -> list[Path]:
+    readable: list[Path] = []
+    for path in paths:
+        try:
+            read_supported_image(path)
+        except Exception:
+            continue
+        readable.append(path)
+    return readable
 
 
 def _relative_path_text(path: Path, root: Path) -> str:
@@ -174,9 +198,8 @@ def _import_folder_report(root: Path, selected_images: list[Path]) -> dict:
 
     for path in selected_images:
         try:
-            with open(path, "rb") as handle:
-                handle.read(1)
-        except OSError:
+            read_supported_image(path)
+        except Exception:
             unreadable_files.append(path)
 
     nested_images = [path for path in supported_images if path.resolve() not in selected]
@@ -238,23 +261,46 @@ def _existing_annotation_for_image(
     return imported
 
 
-def _auto_annotation_for_image(filename: str, image: Image.Image, *, root: Path, split: str = "train") -> Annotation:
+def _auto_annotation_for_image(
+    filename: str,
+    image: Image.Image,
+    *,
+    root: Path,
+    split: str = "train",
+    metadata: dict | None = None,
+) -> Annotation:
     existing = load_annotation(filename, root)
     if existing is not None:
-        return ensure_keypoint_template(existing)
+        existing = ensure_keypoint_template(existing)
+        return _apply_image_metadata(existing, metadata or {})
 
     settings = load_settings()
     width, height = image.size
     annotation = create_blank_annotation(filename, width, height, annotator=settings.get("annotator", "default"))
     annotation.image.split = normalize_split(split)
+    _apply_image_metadata(annotation, metadata or {})
     if settings.get("auto_detect", True):
-        result = estimate_keypoints_from_image(image)
+        result, image_preprocess, roi_used, scan_used = estimate_keypoints_with_preprocessing(image, use_enhanced=False)
+        model_visible_count = visible_keypoint_count(result.keypoints)
         annotation.keypoints = result.keypoints
+        template_fallback = apply_template_fallback(
+            annotation,
+            reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
+            model_visible_count=model_visible_count,
+        )
+        warnings = list(result.warnings)
+        if template_fallback["enabled"]:
+            warnings.append("Auto-detect was incomplete; draggable template points were added for doctor review.")
         annotation.auto_initialization = {
             "source": result.source,
             "strategy": result.strategy,
             "attempts": result.attempts,
-            "warnings": result.warnings,
+            "warnings": warnings,
+            "image_preprocess": image_preprocess,
+            "roi_crop_used": roi_used,
+            "scan_transform_used": scan_used,
+            "model_visible_count": model_visible_count,
+            "template_fallback": template_fallback,
             "created_at": annotation.annotator.created_at,
         }
     else:
@@ -266,10 +312,11 @@ def _auto_annotation_for_image(filename: str, image: Image.Image, *, root: Path,
     return ensure_keypoint_template(annotation)
 
 
-def _blank_annotation_for_image(filename: str, image: Image.Image, *, split: str = "train") -> Annotation:
+def _blank_annotation_for_image(filename: str, image: Image.Image, *, split: str = "train", metadata: dict | None = None) -> Annotation:
     settings = load_settings()
     annotation = create_blank_annotation(filename, image.width, image.height, annotator=settings.get("annotator", "default"))
     annotation.image.split = normalize_split(split)
+    _apply_image_metadata(annotation, metadata or {})
     annotation.auto_initialization = {
         "source": "queued" if settings.get("auto_detect", True) else "disabled",
         "warnings": [],
@@ -355,18 +402,25 @@ async def load_image_annotation(file: UploadFile = File(...)):
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
     filename = _safe_filename(file.filename)
-    image = _read_image_bytes(content)
     root = current_root()
     ensure_dataset_layout(root)
     split = "train"
     image_path = image_path_for(filename, root, split)
     with open(image_path, "wb") as handle:
         handle.write(content)
+    try:
+        image, metadata = _read_image_record(image_path)
+    except HTTPException:
+        try:
+            image_path.unlink()
+        except OSError:
+            pass
+        raise
 
-    annotation = _auto_annotation_for_image(filename, image, root=root, split=split)
+    annotation = _auto_annotation_for_image(filename, image, root=root, split=split, metadata=metadata)
     upsert_manifest_image(image_path, annotation=annotation, root=root, split=split)
     payload = model_to_dict(annotation)
-    payload["image_url"] = f"/api/annotation/image/{filename}"
+    payload["image_url"] = _image_url_for_path(image_path)
     return payload
 
 
@@ -386,6 +440,9 @@ async def open_folder(request: OpenFolderRequest):
     if not image_files:
         raise HTTPException(status_code=400, detail="No supported image files found in the folder.")
     import_report = _import_folder_report(root, image_files)
+    image_files = _readable_image_files(image_files)
+    if not image_files:
+        raise HTTPException(status_code=400, detail="No readable supported image files found in the folder.")
 
     split = normalize_split(request.split)
     save_manifest(Manifest(), root)
@@ -447,20 +504,25 @@ async def load_annotation_by_name(filename: str):
     if image_path is None or not image_path.exists():
         raise HTTPException(status_code=404, detail="Image not found.")
     split = _split_from_image_path(image_path)
+    image, metadata = _read_image_record(image_path)
     annotation = _existing_annotation_for_image(image_path, root=root, split=split, persist_imported=True)
     if annotation is None:
-        annotation = _blank_annotation_for_image(filename, _read_image_path(image_path), split=split)
+        annotation = _blank_annotation_for_image(filename, image, split=split, metadata=metadata)
         upsert_manifest_image(image_path, annotation=None, root=root, split=split)
     else:
+        annotation.image.width = image.width
+        annotation.image.height = image.height
+        _apply_image_metadata(annotation, metadata)
         upsert_manifest_image(image_path, annotation=annotation, root=root, split=split)
     payload = model_to_dict(annotation)
-    payload["image_url"] = f"/api/annotation/image/{filename}"
+    payload["image_url"] = _image_url_for_path(image_path)
     return payload
 
 
 @router.post("/save")
 async def save_annotation_data(annotation: Annotation):
     annotation = ensure_keypoint_template(annotation)
+    annotation.measurements_snapshot = compute_measurements(annotation)
     root = current_root()
     ensure_dataset_layout(root)
     save_annotation(annotation, root)
@@ -472,6 +534,7 @@ async def save_annotation_data(annotation: Annotation):
         "status": "success",
         "annotation_path": str(annotation_path(annotation.image.filename, root).relative_to(root)),
         "label_path": str(saved_label.relative_to(root)) if saved_label.is_relative_to(root) else str(saved_label),
+        "measurements_snapshot": annotation.measurements_snapshot,
     }
 
 
@@ -483,7 +546,7 @@ async def auto_detect_image(request: AutoDetectImageRequest):
     if image_path is None or not image_path.exists():
         raise HTTPException(status_code=404, detail="Image not found.")
 
-    image = _read_image_path(image_path)
+    image, metadata = _read_image_record(image_path)
     split = _split_from_image_path(image_path)
     settings = load_settings()
     existing = load_annotation(filename, root)
@@ -495,45 +558,74 @@ async def auto_detect_image(request: AutoDetectImageRequest):
         existing.image.width = image.width
         existing.image.height = image.height
         existing.image.split = normalize_split(split)
+    _apply_image_metadata(existing, metadata)
 
-    result = estimate_keypoints_from_image(image, min_visible_keypoints=1, include_partial=request.include_partial)
+    result, image_preprocess, roi_used, scan_used = estimate_keypoints_with_preprocessing(
+        image,
+        use_enhanced=request.use_enhanced,
+        use_scan=request.use_scan,
+        min_visible_keypoints=1,
+        include_partial=request.include_partial,
+        roi_crop=existing.roi_crop if request.use_roi else None,
+        scan_transform=existing.scan_transform,
+    )
+    model_visible_count = visible_keypoint_count(result.keypoints)
     auto_annotation = create_blank_annotation(filename, image.width, image.height, annotator=existing.annotator.user_id)
     auto_annotation.image.split = normalize_split(split)
     auto_annotation.keypoints = result.keypoints
     auto_annotation = ensure_keypoint_template(auto_annotation)
-    result_visible = _count_visible_keypoints(auto_annotation)
     preserved_manual = _count_manual_keypoints(existing) if request.preserve_manual else 0
 
-    if result_visible > 0:
+    if model_visible_count > 0:
         annotation = _merge_auto_keypoints(existing, auto_annotation, preserve_manual=request.preserve_manual)
-        applied = True
     else:
         annotation = existing
-        applied = False
+    template_fallback = apply_template_fallback(
+        annotation,
+        reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
+        model_visible_count=model_visible_count,
+    )
+    applied_visible_count = _count_visible_keypoints(annotation)
+    applied = model_visible_count > 0 or template_fallback["enabled"]
 
+    warnings = list(result.warnings)
+    if template_fallback["enabled"]:
+        warnings.append("Auto-detect was incomplete; draggable template points were added for doctor review.")
     annotation.auto_initialization = {
         "source": result.source,
         "strategy": result.strategy,
         "attempts": result.attempts,
-        "warnings": result.warnings,
+        "warnings": warnings,
         "manual_retry": True,
         "include_partial": request.include_partial,
         "preserve_manual": request.preserve_manual,
+        "image_preprocess": image_preprocess,
+        "roi_crop_used": roi_used,
+        "scan_transform_used": scan_used,
+        "model_visible_count": model_visible_count,
+        "template_fallback": template_fallback,
         "created_at": annotation.annotator.created_at,
     }
+    _apply_image_metadata(annotation, metadata)
+    annotation.measurements_snapshot = compute_measurements(annotation)
     save_annotation(annotation, root)
     upsert_manifest_image(image_path, annotation=annotation, root=root, split=annotation.image.split)
     saved_label = label_path(annotation.image.filename, root, annotation.image.split)
     payload = model_to_dict(annotation)
-    payload["image_url"] = f"/api/annotation/image/{filename}"
+    payload["image_url"] = _image_url_for_path(image_path)
     payload["auto_detect"] = {
         "source": result.source,
         "strategy": result.strategy,
         "attempts": result.attempts,
-        "warnings": result.warnings,
-        "visible_count": result_visible,
+        "warnings": warnings,
+        "visible_count": model_visible_count,
+        "applied_visible_count": applied_visible_count,
         "applied": applied,
         "preserved_manual_count": preserved_manual,
+        "image_preprocess": image_preprocess,
+        "roi_crop_used": roi_used,
+        "scan_transform_used": scan_used,
+        "template_fallback": template_fallback,
         "annotation_path": str(annotation_path(annotation.image.filename, root).relative_to(root)),
         "label_path": str(saved_label.relative_to(root)) if saved_label.is_relative_to(root) else str(saved_label),
     }
@@ -545,12 +637,20 @@ async def get_auto_detect_status():
     return auto_detect_status(current_root())
 
 
+@router.post("/measurements/compute")
+async def compute_annotation_measurements(annotation: Annotation):
+    annotation = ensure_keypoint_template(annotation)
+    return compute_measurements(annotation)
+
+
 @router.get("/image/{image_filename:path}")
-async def serve_image(image_filename: str):
+async def serve_image(image_filename: str, enhanced: bool = False):
     root = current_root()
     image_path = find_image_path(_safe_filename(image_filename), root)
     if image_path is None or not image_path.exists() or not image_path.is_file():
         raise HTTPException(status_code=404, detail="Image not found.")
+    if is_dicom_path(image_path) or enhanced:
+        return FileResponse(cached_rendered_png(image_path, enhanced=enhanced), media_type="image/png")
     return FileResponse(image_path)
 
 

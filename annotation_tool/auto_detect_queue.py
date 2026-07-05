@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageOps
-
-from .heuristics import estimate_keypoints_from_image
+from .auto_detection import estimate_keypoints_with_preprocessing, preprocess_label
+from .image_io import read_supported_image
+from .measurements import compute_measurements
 from .schema import create_blank_annotation, normalize_split
 from .storage import (
     find_sidecar_label_path,
@@ -17,6 +17,7 @@ from .storage import (
     save_annotation,
     upsert_manifest_image,
 )
+from .template_points import apply_template_fallback, visible_keypoint_count
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class AutoDetectItem:
     image_path: Path
     split: str = "train"
     annotator: str = "default"
+    use_enhanced: bool = True
 
 
 _lock = threading.Lock()
@@ -48,6 +50,7 @@ def _empty_status(root: Path) -> dict[str, Any]:
         "skipped": 0,
         "running": False,
         "failures": [],
+        "image_preprocess": None,
     }
 
 
@@ -57,10 +60,17 @@ def replace_auto_detect_queue(
     *,
     split: str = "train",
     annotator: str = "default",
+    use_enhanced: bool = True,
 ) -> dict[str, Any]:
     root = root.expanduser().resolve()
     items = [
-        AutoDetectItem(root=root, image_path=path.expanduser().resolve(), split=normalize_split(split), annotator=annotator)
+        AutoDetectItem(
+            root=root,
+            image_path=path.expanduser().resolve(),
+            split=normalize_split(split),
+            annotator=annotator,
+            use_enhanced=use_enhanced,
+        )
         for path in image_paths
     ]
     with _lock:
@@ -70,6 +80,7 @@ def replace_auto_detect_queue(
         status["total"] = len(items)
         status["pending"] = len(items)
         status["running"] = bool(items)
+        status["image_preprocess"] = preprocess_label(use_enhanced=use_enhanced) if items else None
         _status_by_root[_root_key(root)] = status
         _ensure_worker_locked()
         return dict(status)
@@ -83,6 +94,19 @@ def auto_detect_status(root: Path) -> dict[str, Any]:
             **status,
             "failures": list(status.get("failures", [])),
         }
+
+
+def _apply_image_metadata(annotation, metadata: dict[str, Any]) -> None:
+    for key in (
+        "source_format",
+        "pixel_spacing_mm",
+        "pixel_spacing_row_mm",
+        "pixel_spacing_col_mm",
+        "pixel_spacing_source",
+        "dicom_warnings",
+    ):
+        if key in metadata:
+            setattr(annotation.image, key, metadata[key])
 
 
 def _ensure_worker_locked() -> None:
@@ -125,19 +149,19 @@ def _worker_loop() -> None:
                 status["failures"] = failures[-10:]
 
 
-def _read_image(path: Path) -> Image.Image:
-    image = Image.open(path)
-    image = ImageOps.exif_transpose(image)
-    image.load()
-    return image.convert("RGB")
-
-
 def _process_item(item: AutoDetectItem) -> str:
     root = item.root
     filename = item.image_path.name
     existing = load_annotation(filename, root)
     if existing is not None:
         existing.image.split = normalize_split(item.split)
+        try:
+            image, metadata = read_supported_image(item.image_path)
+            existing.image.width = image.width
+            existing.image.height = image.height
+            _apply_image_metadata(existing, metadata)
+        except Exception:
+            pass
         upsert_manifest_image(item.image_path, annotation=existing, root=root, split=item.split)
         return "skipped"
 
@@ -145,22 +169,46 @@ def _process_item(item: AutoDetectItem) -> str:
         imported = load_annotation_from_yolo_label(item.image_path, root, annotator=item.annotator)
         if imported is not None:
             imported.image.split = normalize_split(item.split)
+            try:
+                image, metadata = read_supported_image(item.image_path)
+                imported.image.width = image.width
+                imported.image.height = image.height
+                _apply_image_metadata(imported, metadata)
+            except Exception:
+                pass
+            imported.measurements_snapshot = compute_measurements(imported)
             save_annotation(imported, root, sync_yolo=False)
             upsert_manifest_image(item.image_path, annotation=imported, root=root, split=item.split)
         return "skipped"
 
-    image = _read_image(item.image_path)
+    image, metadata = read_supported_image(item.image_path)
     annotation = create_blank_annotation(filename, image.width, image.height, annotator=item.annotator)
     annotation.image.split = normalize_split(item.split)
-    result = estimate_keypoints_from_image(image)
+    _apply_image_metadata(annotation, metadata)
+    result, image_preprocess, roi_used, scan_used = estimate_keypoints_with_preprocessing(image, use_enhanced=item.use_enhanced)
+    model_visible_count = visible_keypoint_count(result.keypoints)
     annotation.keypoints = result.keypoints
+    template_fallback = apply_template_fallback(
+        annotation,
+        reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
+        model_visible_count=model_visible_count,
+    )
+    warnings = list(result.warnings)
+    if template_fallback["enabled"]:
+        warnings.append("Auto-detect was incomplete; draggable template points were added for doctor review.")
     annotation.auto_initialization = {
         "source": result.source,
         "strategy": result.strategy,
         "attempts": result.attempts,
-        "warnings": result.warnings,
+        "warnings": warnings,
+        "image_preprocess": image_preprocess,
+        "roi_crop_used": roi_used,
+        "scan_transform_used": scan_used,
+        "model_visible_count": model_visible_count,
+        "template_fallback": template_fallback,
         "created_at": annotation.annotator.created_at,
     }
+    annotation.measurements_snapshot = compute_measurements(annotation)
     save_annotation(annotation, root)
     upsert_manifest_image(item.image_path, annotation=annotation, root=root, split=item.split)
     return "done"

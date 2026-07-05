@@ -24,6 +24,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -73,7 +77,7 @@ button:hover,
 .app-shell {
   height: 100vh;
   display: grid;
-  grid-template-rows: 64px minmax(0, 1fr) 104px;
+  grid-template-rows: minmax(72px, auto) minmax(0, 1fr) 104px;
 }
 
 .topbar {
@@ -164,7 +168,7 @@ button:hover,
 
 .tool-row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -173,6 +177,75 @@ button:hover,
   background: var(--accent);
   border-color: var(--accent);
   color: white;
+}
+
+.shenton-toolbox,
+.roi-toolbox,
+.scan-toolbox {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.segmented-row,
+.shenton-actions,
+.roi-actions,
+.scan-actions,
+.view-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.view-toggle {
+  width: 132px;
+  flex: 0 0 auto;
+}
+
+.segmented-row button,
+.shenton-actions button,
+.roi-actions button,
+.scan-actions button,
+.view-toggle button {
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.segmented-row button.active,
+.view-toggle button.active {
+  color: white;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.shenton-review-row {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.shenton-review-row select {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0 8px;
+}
+
+.shenton-toolbox small,
+.roi-toolbox small,
+.scan-toolbox small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .point-groups {
@@ -355,6 +428,7 @@ button:hover,
 
 .summary-grid div,
 .selected-box,
+.measurement-box,
 .settings-box,
 .connection-box,
 .progress-box {
@@ -365,10 +439,35 @@ button:hover,
 }
 
 .settings-box,
-.connection-box {
+.connection-box,
+.measurement-box {
   display: grid;
   gap: 8px;
   margin-bottom: 14px;
+}
+
+.advanced-box {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  margin-bottom: 14px;
+}
+
+.advanced-box summary {
+  min-height: 36px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.advanced-box .settings-box,
+.advanced-box .connection-box {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  margin-bottom: 0;
 }
 
 .progress-box {
@@ -430,6 +529,16 @@ button:hover,
   display: block;
   color: var(--muted);
   font-size: 12px;
+}
+
+.measurement-box {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.measurement-box small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .summary-grid strong {
@@ -637,16 +746,30 @@ dialog::backdrop {
   background: rgba(24, 32, 38, 0.42);
 }
 
-.folder-dialog {
+.folder-dialog,
+.shortcut-dialog {
   width: min(480px, 92vw);
   display: grid;
   gap: 10px;
   padding: 18px;
 }
 
-.folder-dialog h2 {
+.folder-dialog h2,
+.shortcut-dialog h2 {
   margin: 0 0 6px;
   font-size: 18px;
+}
+
+.shortcut-grid {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px 12px;
+  font-size: 13px;
+}
+
+.shortcut-grid span:nth-child(odd) {
+  font-weight: 700;
+  color: var(--accent);
 }
 
 .folder-input-row {

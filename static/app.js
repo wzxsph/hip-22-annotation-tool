@@ -19,24 +19,41 @@ const DEFAULT_SETTINGS = {
   annotator: "default",
 };
 
+const SCAN_CORNER_LABELS = ["左上", "右上", "右下", "左下"];
+
 const App = {
   state: {
     schema: { sides: ["left", "right"], landmarks: DEFAULT_LANDMARKS },
     settings: { ...DEFAULT_SETTINGS },
     image: null,
+    imageBaseUrl: "",
+    imageView: "enhanced",
     annotation: null,
     currentFilename: null,
     transform: { x: 0, y: 0, scale: 1 },
     activeTool: "select",
     activePointKey: "left_acetabular_outer",
     selectedPoint: null,
+    selectedShentonPoint: null,
+    selectedScanCorner: null,
     selectedConnection: null,
     pendingConnectionStart: null,
     isDragging: false,
+    isDraggingShenton: false,
+    isDraggingScanCorner: false,
+    isDrawingRoi: false,
     isPanning: false,
     dragStarted: false,
     spaceHeld: false,
     showLabels: true,
+    showDefaultConnections: false,
+    showManualConnections: true,
+    showShenton: true,
+    showMeasurements: true,
+    shentonSide: "left",
+    shentonSegment: "obturator_upper_curve",
+    roiStart: null,
+    roiDraft: null,
     lastMouse: { x: 0, y: 0 },
     contextImagePos: { x: 0, y: 0 },
     history: [],
@@ -47,6 +64,7 @@ const App = {
     importReport: null,
     lastSave: null,
     autosaveTimer: null,
+    measurementTimer: null,
     thumbObserver: null,
     autoDetectPollTimer: null,
     autoDetectStatus: null,
@@ -58,6 +76,7 @@ const App = {
     await App.loadSchema();
     App.buildPointList();
     App.bindEvents();
+    App.setTool("select");
     App.updateSettingsPanel();
     App.resize();
     window.addEventListener("resize", App.resize);
@@ -126,6 +145,8 @@ const App = {
     document.getElementById("annotatorInput").addEventListener("change", App.saveSettings);
     document.getElementById("btnSave").addEventListener("click", () => App.saveAnnotation());
     document.getElementById("btnAutoDetect").addEventListener("click", App.handleAutoDetectCurrent);
+    document.getElementById("btnAutoDetectEnhanced").addEventListener("click", () => App.handleAutoDetectCurrent({ useEnhanced: true }));
+    document.getElementById("btnShortcutHelp").addEventListener("click", App.showShortcuts);
     document.getElementById("btnExportYolo").addEventListener("click", () => {
       window.location.href = "/api/annotation/export-yolo";
     });
@@ -134,8 +155,43 @@ const App = {
     document.getElementById("btnFit").addEventListener("click", App.fitToScreen);
     document.getElementById("btnToggleLabels").addEventListener("click", () => {
       App.state.showLabels = !App.state.showLabels;
+      App.syncDisplayToggles();
     });
     document.getElementById("btnDeleteConnection").addEventListener("click", App.deleteSelectedConnection);
+    document.getElementById("showDefaultConnectionsToggle").addEventListener("change", (event) => {
+      App.state.showDefaultConnections = event.target.checked;
+      App.renderConnectionList();
+    });
+    document.getElementById("showManualConnectionsToggle").addEventListener("change", (event) => {
+      App.state.showManualConnections = event.target.checked;
+      App.renderConnectionList();
+    });
+    document.getElementById("showShentonToggle").addEventListener("change", (event) => {
+      App.state.showShenton = event.target.checked;
+    });
+    document.getElementById("showMeasurementsToggle").addEventListener("change", (event) => {
+      App.state.showMeasurements = event.target.checked;
+      App.renderMeasurements();
+    });
+    document.getElementById("showPointLabelsToggle").addEventListener("change", (event) => {
+      App.state.showLabels = event.target.checked;
+    });
+    document.querySelectorAll("[data-image-view]").forEach((button) => {
+      button.addEventListener("click", () => App.setImageView(button.dataset.imageView || "original"));
+    });
+    document.querySelectorAll("[data-shenton-side]").forEach((button) => {
+      button.addEventListener("click", () => App.setShentonSide(button.dataset.shentonSide || "left"));
+    });
+    document.querySelectorAll("[data-shenton-segment]").forEach((button) => {
+      button.addEventListener("click", () => App.setShentonSegment(button.dataset.shentonSegment || "obturator_upper_curve"));
+    });
+    document.getElementById("btnShentonUndo").addEventListener("click", App.undoShentonPoint);
+    document.getElementById("btnShentonClear").addEventListener("click", App.clearShentonSegment);
+    document.getElementById("btnRoiClear").addEventListener("click", App.clearRoiCrop);
+    document.getElementById("btnRoiFit").addEventListener("click", App.fitToRoi);
+    document.getElementById("btnScanClear").addEventListener("click", App.clearScanTransform);
+    document.getElementById("btnScanFit").addEventListener("click", App.fitToScanTransform);
+    document.getElementById("shentonReviewSelect").addEventListener("change", App.updateShentonReview);
     document.querySelectorAll("#progressFilters button").forEach((button) => {
       button.addEventListener("click", () => App.setStatusFilter(button.dataset.statusFilter || "all"));
     });
@@ -169,6 +225,11 @@ const App = {
     canvas.style.height = `${rect.height}px`;
     const ctx = canvas.getContext("2d");
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  },
+
+  showShortcuts: () => {
+    const dialog = document.getElementById("shortcutsDialog");
+    if (dialog?.showModal) dialog.showModal();
   },
 
   buildPointList: () => {
@@ -216,7 +277,14 @@ const App = {
     document.querySelectorAll(".tool-button").forEach((button) => {
       button.classList.toggle("active", button.dataset.tool === tool);
     });
-    document.getElementById("mainCanvas").style.cursor = tool === "point" || tool === "line" ? "crosshair" : "default";
+    const shentonToolbox = document.getElementById("shentonToolbox");
+    const roiToolbox = document.getElementById("roiToolbox");
+    const scanToolbox = document.getElementById("scanToolbox");
+    if (shentonToolbox) shentonToolbox.hidden = tool !== "shenton";
+    if (roiToolbox) roiToolbox.hidden = tool !== "roi";
+    if (scanToolbox) scanToolbox.hidden = tool !== "scan";
+    document.getElementById("mainCanvas").style.cursor =
+      tool === "point" || tool === "line" || tool === "shenton" || tool === "roi" || tool === "scan" ? "crosshair" : "default";
     App.updateSelectedBox();
   },
 
@@ -323,19 +391,20 @@ const App = {
     }
   },
 
-  handleAutoDetectCurrent: async () => {
+  handleAutoDetectCurrent: async (options = {}) => {
     if (!App.state.currentFilename || !App.state.annotation) {
       App.setStatus("请先打开一张图片");
       return;
     }
-    const button = document.getElementById("btnAutoDetect");
+    const useEnhanced = Boolean(options.useEnhanced);
+    const button = document.getElementById(useEnhanced ? "btnAutoDetectEnhanced" : "btnAutoDetect");
     button.disabled = true;
     const saved = await App.saveAnnotation({ silent: true, skipManifest: true });
     if (saved === false) {
       button.disabled = false;
       return;
     }
-    App.setStatus("正在重新自动识别当前图片...");
+    App.setStatus(useEnhanced ? "正在使用增强预览重试自动识别..." : "正在重新自动识别当前图片...");
     try {
       const res = await fetch("/api/annotation/auto-detect-image", {
         method: "POST",
@@ -344,6 +413,9 @@ const App = {
           filename: App.state.currentFilename,
           preserve_manual: true,
           include_partial: true,
+          use_enhanced: useEnhanced,
+          use_roi: true,
+          use_scan: true,
         }),
       });
       const data = await App.readJsonResponse(res, "auto detect image failed");
@@ -357,10 +429,15 @@ const App = {
       };
       await App.loadManifest();
       App.renderSaveInfo();
-      if (info.applied && info.visible_count > 0) {
-        App.setStatus(`自动识别完成：识别到 ${info.visible_count} 个点，已保留人工修改点`);
+      const template = info.template_fallback || {};
+      if (info.applied && template.enabled) {
+        App.setStatus(
+          `${useEnhanced ? "增强识别" : "自动识别"}完成：模型识别 ${info.visible_count || 0} 个点，模板补齐 ${template.filled_count || 0} 个点，请逐点复核`,
+        );
+      } else if (info.applied && info.visible_count > 0) {
+        App.setStatus(`${useEnhanced ? "增强识别" : "自动识别"}完成：识别到 ${info.visible_count} 个点，已保留人工修改点`);
       } else {
-        App.setStatus("自动识别仍未找到可用点，请手工标注或把图片发给项目团队排查");
+        App.setStatus("自动识别仍未找到可用点，请使用模板点拖拽复核或把图片发给项目团队排查");
       }
     } catch (err) {
       App.setStatus(`自动识别失败: ${err.message}`);
@@ -621,11 +698,16 @@ const App = {
 
   clearWorkspaceView: (message = "未打开图像") => {
     App.state.image = null;
+    App.state.imageBaseUrl = "";
+    App.state.imageView = "enhanced";
     App.state.annotation = null;
     App.state.currentFilename = null;
     App.state.selectedPoint = null;
+    App.state.selectedShentonPoint = null;
     App.state.selectedConnection = null;
     App.state.pendingConnectionStart = null;
+    App.state.roiStart = null;
+    App.state.roiDraft = null;
     App.state.manifestImages = [];
     App.state.progress = null;
     App.state.importReport = null;
@@ -638,6 +720,9 @@ const App = {
     document.getElementById("connectionList").innerHTML = "";
     document.getElementById("thumbStrip").innerHTML = "";
     App.renderProgressSummary();
+    App.renderShentonPanel();
+    App.renderMeasurements();
+    App.syncDisplayToggles();
     document.getElementById("selectedConnectionLabel").textContent = "未选中连线";
     document.querySelectorAll(".point-row").forEach((row) => {
       row.classList.add("missing");
@@ -711,20 +796,31 @@ const App = {
 
   applyAnnotation: (annotation) => {
     annotation.connections = Array.isArray(annotation.connections) ? annotation.connections : [];
+    App.normalizeShenton(annotation);
+    App.normalizeRoiCrop(annotation);
+    App.normalizeScanTransform(annotation);
     App.state.annotation = annotation;
     App.state.currentFilename = annotation.image.filename;
     App.state.selectedPoint = null;
+    App.state.selectedShentonPoint = null;
+    App.state.selectedScanCorner = null;
     App.state.selectedConnection = null;
     App.state.pendingConnectionStart = null;
     App.state.activePointKey = "left_acetabular_outer";
     App.state.lastSave = null;
+    App.state.imageView = "enhanced";
+    App.state.roiStart = null;
+    App.state.roiDraft = null;
+    App.state.imageBaseUrl = annotation.image_url || `/api/annotation/image/${encodeURIComponent(annotation.image.filename)}`;
     document.getElementById("annotatorInput").value = annotation.annotator?.user_id || App.state.settings.annotator || "default";
     document.getElementById("imageTitle").textContent = annotation.image.filename;
-    App.loadImage(annotation.image_url || `/api/annotation/image/${encodeURIComponent(annotation.image.filename)}`);
+    App.loadImage(App.imageUrlForCurrentView());
     App.resetHistory();
     App.refreshAll();
     App.renderWarnings();
     App.renderSaveInfo();
+    App.syncImageViewButtons();
+    App.scheduleMeasurementCompute();
   },
 
   loadImage: (src) => {
@@ -738,6 +834,321 @@ const App = {
     image.src = src;
   },
 
+  imageUrlForCurrentView: () => {
+    const base = App.state.imageBaseUrl || (App.state.currentFilename ? `/api/annotation/image/${encodeURIComponent(App.state.currentFilename)}` : "");
+    if (!base) return "";
+    const separator = base.includes("?") ? "&" : "?";
+    return App.state.imageView === "enhanced" ? `${base}${separator}enhanced=true` : base;
+  },
+
+  setImageView: (view) => {
+    App.state.imageView = view === "enhanced" ? "enhanced" : "original";
+    App.syncImageViewButtons();
+    if (App.state.imageBaseUrl) App.loadImage(App.imageUrlForCurrentView());
+  },
+
+  syncImageViewButtons: () => {
+    document.querySelectorAll("[data-image-view]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.imageView === App.state.imageView);
+    });
+  },
+
+  normalizeRoiCrop: (annotation) => {
+    const current = annotation.roi_crop && typeof annotation.roi_crop === "object" ? annotation.roi_crop : {};
+    const enabled = Boolean(current.enabled);
+    const x = Number(current.x);
+    const y = Number(current.y);
+    const width = Number(current.width);
+    const height = Number(current.height);
+    annotation.roi_crop = {
+      enabled: enabled && Number.isFinite(x) && Number.isFinite(y) && width >= 8 && height >= 8,
+      x: Number.isFinite(x) ? x : null,
+      y: Number.isFinite(y) ? y : null,
+      width: Number.isFinite(width) ? width : null,
+      height: Number.isFinite(height) ? height : null,
+      source: current.source || "manual",
+      updated_at: current.updated_at || new Date().toISOString(),
+      annotator: current.annotator || document.getElementById("annotatorInput")?.value?.trim() || "default",
+    };
+    if (!annotation.roi_crop.enabled) {
+      annotation.roi_crop.x = null;
+      annotation.roi_crop.y = null;
+      annotation.roi_crop.width = null;
+      annotation.roi_crop.height = null;
+    }
+  },
+
+  normalizeScanTransform: (annotation) => {
+    const current = annotation.scan_transform && typeof annotation.scan_transform === "object" ? annotation.scan_transform : {};
+    const rawCorners = Array.isArray(current.corners) ? current.corners : [];
+    const corners = rawCorners
+      .slice(0, 4)
+      .map((point) => ({
+        x: Number(point?.x),
+        y: Number(point?.y),
+      }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+      .map((point) => ({
+        x: App.clamp(point.x, 0, annotation.image.width || 1),
+        y: App.clamp(point.y, 0, annotation.image.height || 1),
+      }));
+    const ordered = corners.length === 4 ? App.orderScanCorners(corners) : corners;
+    annotation.scan_transform = {
+      enabled: Boolean(current.enabled) && ordered.length === 4 && App.scanPolygonArea(ordered) >= 64,
+      corners: ordered,
+      mode: current.mode || "manual_four_corners",
+      source: current.source || "manual",
+      updated_at: current.updated_at || new Date().toISOString(),
+      annotator: current.annotator || document.getElementById("annotatorInput")?.value?.trim() || "default",
+    };
+  },
+
+  normalizeShenton: (annotation) => {
+    annotation.shenton_curves = annotation.shenton_curves && typeof annotation.shenton_curves === "object" ? annotation.shenton_curves : {};
+    annotation.shenton_review = annotation.shenton_review && typeof annotation.shenton_review === "object" ? annotation.shenton_review : {};
+    ["left", "right"].forEach((side) => {
+      annotation.shenton_curves[side] = annotation.shenton_curves[side] || {};
+      ["obturator_upper_curve", "femoral_neck_inner_lower_curve"].forEach((segment) => {
+        const current = annotation.shenton_curves[side][segment] || {};
+        annotation.shenton_curves[side][segment] = {
+          type: current.type || "polyline",
+          points: Array.isArray(current.points) ? current.points : [],
+          source: current.source || "manual",
+          updated_at: current.updated_at || new Date().toISOString(),
+          annotator: current.annotator || document.getElementById("annotatorInput")?.value?.trim() || "default",
+        };
+      });
+      const review = annotation.shenton_review[side] || {};
+      const allowed = ["continuous", "discontinuous", "uncertain", "not_reviewed"];
+      annotation.shenton_review[side] = {
+        status: allowed.includes(review.status) ? review.status : "not_reviewed",
+        updated_at: review.updated_at || new Date().toISOString(),
+        annotator: review.annotator || document.getElementById("annotatorInput")?.value?.trim() || "default",
+      };
+    });
+  },
+
+  currentShentonSegment: () => {
+    if (!App.state.annotation) return null;
+    App.normalizeShenton(App.state.annotation);
+    return App.state.annotation.shenton_curves[App.state.shentonSide][App.state.shentonSegment];
+  },
+
+  hasShentonPoints: () => {
+    const curves = App.state.annotation?.shenton_curves || {};
+    return ["left", "right"].some((side) =>
+      ["obturator_upper_curve", "femoral_neck_inner_lower_curve"].some(
+        (segment) => (curves[side]?.[segment]?.points || []).length > 0,
+      ),
+    );
+  },
+
+  setShentonSide: (side) => {
+    App.state.shentonSide = side === "right" ? "right" : "left";
+    App.state.selectedShentonPoint = null;
+    App.renderShentonPanel();
+  },
+
+  setShentonSegment: (segment) => {
+    App.state.shentonSegment =
+      segment === "femoral_neck_inner_lower_curve" ? "femoral_neck_inner_lower_curve" : "obturator_upper_curve";
+    App.state.selectedShentonPoint = null;
+    App.renderShentonPanel();
+  },
+
+  addShentonPoint: (imagePos) => {
+    const segment = App.currentShentonSegment();
+    if (!segment || !App.state.image) return;
+    App.pushHistory();
+    segment.points.push({
+      x: App.clamp(imagePos.x, 0, App.state.image.width),
+      y: App.clamp(imagePos.y, 0, App.state.image.height),
+    });
+    segment.updated_at = new Date().toISOString();
+    segment.annotator = document.getElementById("annotatorInput").value.trim() || "default";
+    App.state.selectedPoint = null;
+    App.state.selectedConnection = null;
+    App.state.selectedShentonPoint = {
+      side: App.state.shentonSide,
+      segment: App.state.shentonSegment,
+      index: segment.points.length - 1,
+    };
+    App.refreshAll();
+    App.pushHistory();
+    App.scheduleMeasurementCompute();
+    App.scheduleAutosave();
+  },
+
+  undoShentonPoint: () => {
+    const segment = App.currentShentonSegment();
+    if (!segment || !segment.points.length) return;
+    App.pushHistory();
+    segment.points.pop();
+    segment.updated_at = new Date().toISOString();
+    App.state.selectedShentonPoint = null;
+    App.refreshAll();
+    App.pushHistory();
+    App.scheduleMeasurementCompute();
+    App.scheduleAutosave();
+  },
+
+  clearShentonSegment: () => {
+    const segment = App.currentShentonSegment();
+    if (!segment || !segment.points.length) return;
+    App.pushHistory();
+    segment.points = [];
+    segment.updated_at = new Date().toISOString();
+    App.state.selectedShentonPoint = null;
+    App.refreshAll();
+    App.pushHistory();
+    App.scheduleMeasurementCompute();
+    App.scheduleAutosave();
+  },
+
+  deleteSelectedShentonPoint: () => {
+    const selected = App.state.selectedShentonPoint;
+    if (!selected || !App.state.annotation) return;
+    const segment = App.state.annotation.shenton_curves?.[selected.side]?.[selected.segment];
+    if (!segment?.points?.[selected.index]) return;
+    App.pushHistory();
+    segment.points.splice(selected.index, 1);
+    segment.updated_at = new Date().toISOString();
+    App.state.selectedShentonPoint = null;
+    App.refreshAll();
+    App.pushHistory();
+    App.scheduleMeasurementCompute();
+    App.scheduleAutosave();
+  },
+
+  updateShentonReview: () => {
+    if (!App.state.annotation) return;
+    App.normalizeShenton(App.state.annotation);
+    App.pushHistory();
+    const review = App.state.annotation.shenton_review[App.state.shentonSide];
+    review.status = document.getElementById("shentonReviewSelect").value || "not_reviewed";
+    review.updated_at = new Date().toISOString();
+    review.annotator = document.getElementById("annotatorInput").value.trim() || "default";
+    App.refreshAll();
+    App.pushHistory();
+    App.scheduleMeasurementCompute();
+    App.scheduleAutosave();
+  },
+
+  renderShentonPanel: () => {
+    document.querySelectorAll("[data-shenton-side]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.shentonSide === App.state.shentonSide);
+    });
+    document.querySelectorAll("[data-shenton-segment]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.shentonSegment === App.state.shentonSegment);
+    });
+    const select = document.getElementById("shentonReviewSelect");
+    const hint = document.getElementById("shentonHintText");
+    if (!select || !hint) return;
+    if (!App.state.annotation) {
+      select.value = "not_reviewed";
+      hint.textContent = "每侧两段曲线，每段至少 3 个点，点越多越贴合曲线；本功能仅用于研究复核辅助。";
+      return;
+    }
+    App.normalizeShenton(App.state.annotation);
+    select.value = App.state.annotation.shenton_review[App.state.shentonSide]?.status || "not_reviewed";
+    const segment = App.currentShentonSegment();
+    const count = segment?.points?.length || 0;
+    hint.textContent = `当前段 ${count} 个点；至少 3 点后可计算 Shenton 连续性候选，点越多越贴合曲线。`;
+  },
+
+  scheduleMeasurementCompute: () => {
+    clearTimeout(App.state.measurementTimer);
+    App.state.measurementTimer = setTimeout(App.computeMeasurements, 250);
+  },
+
+  computeMeasurements: async () => {
+    if (!App.state.annotation) return;
+    try {
+      const res = await fetch("/api/annotation/measurements/compute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(App.state.annotation),
+      });
+      const measurements = await App.readJsonResponse(res, "measurements failed");
+      App.state.annotation.measurements_snapshot = {
+        ...(App.state.annotation.measurements_snapshot || {}),
+        ...measurements,
+      };
+      App.renderMeasurements();
+    } catch (err) {
+      console.warn("measurement compute failed", err);
+    }
+  },
+
+  renderMeasurements: () => {
+    const summary = document.getElementById("shentonSummaryText");
+    const clinical = document.getElementById("clinicalParameterText");
+    const acetabular = document.getElementById("acetabularDepthText");
+    if (!summary || !clinical || !acetabular) return;
+    if (!App.state.showMeasurements) {
+      summary.textContent = "测量显示已关闭";
+      clinical.textContent = "关键指标：已隐藏";
+      acetabular.textContent = "髋臼深度：已隐藏";
+      return;
+    }
+    const snapshot = App.state.annotation?.measurements_snapshot || {};
+    const shenton = snapshot.shenton || {};
+    const sideText = (side) => {
+      const item = shenton[side] || {};
+      if (item.status === "unavailable") return `${side === "left" ? "左" : "右"}：曲线不足`;
+      const extensionGap =
+        typeof item.extension_gap_px === "number"
+          ? `${item.extension_gap_px.toFixed(1)}px`
+          : typeof item.gap_px === "number"
+            ? `${item.gap_px.toFixed(1)}px`
+            : "-";
+      const extensionGapMm =
+        typeof item.extension_gap_mm === "number"
+          ? ` / ${item.extension_gap_mm.toFixed(2)}mm`
+          : typeof item.gap_mm === "number"
+            ? ` / ${item.gap_mm.toFixed(2)}mm`
+            : "";
+      const endpointGap = typeof item.endpoint_gap_px === "number" ? `，端点 ${item.endpoint_gap_px.toFixed(1)}px` : "";
+      const angle = typeof item.tangent_angle_deg === "number" ? `${item.tangent_angle_deg.toFixed(1)}°` : "-";
+      const candidate = item.continuous_candidate === true ? "候选连续" : item.continuous_candidate === false ? "需复核" : "待计算";
+      return `${side === "left" ? "左" : "右"}：${candidate}，延长 gap ${extensionGap}${extensionGapMm}${endpointGap}，角度 ${angle}`;
+    };
+    summary.textContent = `Shenton：${sideText("left")}；${sideText("right")}`;
+    const clinicalParameters = snapshot.clinical_parameters || {};
+    const formatNumber = (value, suffix = "°") => (typeof value === "number" ? `${value.toFixed(1)}${suffix}` : "-");
+    const parameterText = (side) => {
+      const item = clinicalParameters[side] || {};
+      const label = side === "left" ? "左" : "右";
+      if (item.status !== "computed") return `${label}：关键点不足`;
+      return `${label}：AI ${formatNumber(item.ai_tonnis_angle_deg)}，Sharp ${formatNumber(item.sharp_angle_deg)}，CE ${formatNumber(item.ce_angle_deg)}，颈干 ${formatNumber(item.neck_shaft_angle_deg)}`;
+    };
+    clinical.textContent = `关键指标：${parameterText("left")}；${parameterText("right")}`;
+    const depth = snapshot.acetabular_depth || {};
+    const depthText = (side) => {
+      const item = depth[side] || {};
+      const label = side === "left" ? "左" : "右";
+      if (item.status !== "computed") return `${label}：关键点不足`;
+      const px = typeof item.value_px === "number" ? `${item.value_px.toFixed(1)}px` : "-";
+      const mm = typeof item.value_mm === "number" ? ` / ${item.value_mm.toFixed(2)}mm` : "";
+      return `${label}：${px}${mm}`;
+    };
+    acetabular.textContent = `髋臼深度：${depthText("left")}；${depthText("right")}`;
+  },
+
+  syncDisplayToggles: () => {
+    const toggles = {
+      showDefaultConnectionsToggle: App.state.showDefaultConnections,
+      showManualConnectionsToggle: App.state.showManualConnections,
+      showShentonToggle: App.state.showShenton,
+      showMeasurementsToggle: App.state.showMeasurements,
+      showPointLabelsToggle: App.state.showLabels,
+    };
+    Object.entries(toggles).forEach(([id, value]) => {
+      const element = document.getElementById(id);
+      if (element) element.checked = Boolean(value);
+    });
+  },
+
   saveAnnotation: async (options = {}) => {
     if (!App.state.annotation) return true;
     App.state.annotation.annotator = App.state.annotation.annotator || {};
@@ -747,6 +1158,8 @@ const App = {
       App.state.annotation.image.width = App.state.image.naturalWidth || App.state.image.width;
       App.state.annotation.image.height = App.state.image.naturalHeight || App.state.image.height;
     }
+    App.normalizeRoiCrop(App.state.annotation);
+    App.normalizeScanTransform(App.state.annotation);
     if (!options.silent) App.setStatus("正在保存...");
     try {
       const res = await fetch("/api/annotation/save", {
@@ -755,6 +1168,10 @@ const App = {
         body: JSON.stringify(App.state.annotation),
       });
       const payload = await App.readJsonResponse(res, "save failed");
+      if (payload.measurements_snapshot) {
+        App.state.annotation.measurements_snapshot = payload.measurements_snapshot;
+        App.renderMeasurements();
+      }
       App.state.lastSave = {
         filename: App.state.annotation.image.filename,
         timeText: new Date().toLocaleTimeString(),
@@ -818,12 +1235,19 @@ const App = {
   refreshAll: () => {
     App.refreshPointList();
     App.renderConnectionList();
+    App.renderShentonPanel();
+    App.renderMeasurements();
+    App.renderRoiPanel();
+    App.renderScanPanel();
+    App.syncDisplayToggles();
     App.updateSummary();
     App.updateSelectedBox();
   },
 
   selectPoint: (key) => {
     App.state.selectedPoint = key;
+    App.state.selectedShentonPoint = null;
+    App.state.selectedScanCorner = null;
     App.state.selectedConnection = null;
     document.querySelectorAll(".point-row").forEach((row) => row.classList.toggle("selected", row.dataset.key === key));
     App.renderConnectionList();
@@ -833,6 +1257,8 @@ const App = {
   selectConnection: (id) => {
     App.state.selectedConnection = id;
     App.state.selectedPoint = null;
+    App.state.selectedShentonPoint = null;
+    App.state.selectedScanCorner = null;
     document.querySelectorAll(".point-row").forEach((row) => row.classList.remove("selected"));
     App.renderConnectionList();
     App.updateSelectedBox();
@@ -856,6 +1282,7 @@ const App = {
     point.updated_at = new Date().toISOString();
     App.refreshAll();
     App.pushHistory();
+    App.scheduleMeasurementCompute();
     App.scheduleAutosave();
   },
 
@@ -879,6 +1306,7 @@ const App = {
     App.selectPoint(key);
     App.refreshAll();
     App.pushHistory();
+    App.scheduleMeasurementCompute();
     App.scheduleAutosave();
   },
 
@@ -958,6 +1386,45 @@ const App = {
       App.state.lastMouse = pos;
       return;
     }
+    if (App.state.activeTool === "roi") {
+      App.state.isDrawingRoi = true;
+      App.state.dragStarted = false;
+      App.state.roiStart = imagePos;
+      App.state.roiDraft = null;
+      App.state.lastMouse = pos;
+      return;
+    }
+    if (App.state.activeTool === "scan") {
+      const hitScan = App.hitTestScanCorner(pos.x, pos.y);
+      if (hitScan !== null) {
+        App.state.selectedScanCorner = hitScan;
+        App.state.selectedPoint = null;
+        App.state.selectedShentonPoint = null;
+        App.state.selectedConnection = null;
+        App.state.isDraggingScanCorner = true;
+        App.state.dragStarted = false;
+        App.state.lastMouse = pos;
+        App.refreshAll();
+        return;
+      }
+      App.addScanCorner(imagePos);
+      return;
+    }
+    if (App.state.activeTool === "shenton") {
+      const hitShenton = App.hitTestShentonPoint(pos.x, pos.y);
+      if (hitShenton) {
+        App.state.selectedShentonPoint = hitShenton;
+        App.state.selectedPoint = null;
+        App.state.selectedConnection = null;
+        App.state.isDraggingShenton = true;
+        App.state.dragStarted = false;
+        App.state.lastMouse = pos;
+        App.refreshAll();
+        return;
+      }
+      App.addShentonPoint(imagePos);
+      return;
+    }
     if (App.state.activeTool === "point") {
       App.placePoint(App.state.activePointKey, imagePos);
       return;
@@ -997,7 +1464,44 @@ const App = {
 
   handleMouseMove: (event) => {
     const pos = App.mousePos(event);
-    if (App.state.isDragging && App.state.selectedPoint) {
+    if (App.state.isDraggingShenton && App.state.selectedShentonPoint) {
+      const selected = App.state.selectedShentonPoint;
+      const segment = App.state.annotation?.shenton_curves?.[selected.side]?.[selected.segment];
+      const point = segment?.points?.[selected.index];
+      if (!point) return;
+      if (!App.state.dragStarted) {
+        App.pushHistory();
+        App.state.dragStarted = true;
+      }
+      const imagePos = App.toImageCoords(pos.x, pos.y);
+      point.x = App.clamp(imagePos.x, 0, App.state.image.width);
+      point.y = App.clamp(imagePos.y, 0, App.state.image.height);
+      segment.updated_at = new Date().toISOString();
+      segment.annotator = document.getElementById("annotatorInput").value.trim() || "default";
+      App.renderShentonPanel();
+      App.renderMeasurements();
+    } else if (App.state.isDraggingScanCorner && App.state.selectedScanCorner !== null) {
+      App.normalizeScanTransform(App.state.annotation);
+      const scan = App.state.annotation?.scan_transform;
+      const point = scan?.corners?.[App.state.selectedScanCorner];
+      if (!point) return;
+      if (!App.state.dragStarted) {
+        App.pushHistory();
+        App.state.dragStarted = true;
+      }
+      const imagePos = App.toImageCoords(pos.x, pos.y);
+      point.x = Number(App.clamp(imagePos.x, 0, App.state.image.width).toFixed(2));
+      point.y = Number(App.clamp(imagePos.y, 0, App.state.image.height).toFixed(2));
+      scan.enabled = scan.corners.length === 4 && App.scanPolygonArea(scan.corners) >= 64;
+      scan.updated_at = new Date().toISOString();
+      scan.annotator = document.getElementById("annotatorInput").value.trim() || "default";
+      App.renderScanPanel();
+      App.updateSelectedBox();
+    } else if (App.state.isDrawingRoi && App.state.roiStart) {
+      const imagePos = App.toImageCoords(pos.x, pos.y);
+      App.state.roiDraft = App.normalizedRoiBox(App.state.roiStart, imagePos);
+      App.state.dragStarted = Boolean(App.state.roiDraft);
+    } else if (App.state.isDragging && App.state.selectedPoint) {
       const point = App.state.annotation.keypoints[App.state.selectedPoint];
       if (!App.state.dragStarted) {
         App.pushHistory();
@@ -1021,13 +1525,35 @@ const App = {
   },
 
   handleMouseUp: () => {
-    if (App.state.isDragging && App.state.dragStarted) {
+    if (App.state.isDraggingShenton && App.state.dragStarted) {
+      App.pushHistory();
+      App.scheduleMeasurementCompute();
+      App.scheduleAutosave();
+    }
+    if (App.state.isDraggingScanCorner && App.state.dragStarted) {
       App.pushHistory();
       App.scheduleAutosave();
     }
+    if (App.state.isDragging && App.state.dragStarted) {
+      App.pushHistory();
+      App.scheduleMeasurementCompute();
+      App.scheduleAutosave();
+    }
+    if (App.state.isDrawingRoi && App.state.dragStarted && App.state.roiDraft) {
+      App.pushHistory();
+      App.setRoiCrop(App.state.roiDraft);
+      App.state.roiDraft = null;
+      App.pushHistory();
+      App.scheduleAutosave();
+      App.setStatus("ROI 已更新；自动识别会优先在该区域内重试");
+    }
     App.state.isDragging = false;
+    App.state.isDraggingShenton = false;
+    App.state.isDraggingScanCorner = false;
+    App.state.isDrawingRoi = false;
     App.state.isPanning = false;
     App.state.dragStarted = false;
+    App.state.roiStart = null;
   },
 
   handleWheel: (event) => {
@@ -1101,38 +1627,61 @@ const App = {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
       App.saveAnnotation();
+      return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
       App.undo();
+      return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
       event.preventDefault();
       App.redo();
+      return;
     }
     if (event.key === "Delete") {
       if (App.state.selectedConnection) App.deleteSelectedConnection();
+      else if (App.state.selectedShentonPoint) App.deleteSelectedShentonPoint();
+      else if (App.state.selectedScanCorner !== null) App.deleteSelectedScanCorner();
       else if (App.state.selectedPoint) App.markMissing(App.state.selectedPoint);
     }
     if (event.key === "Escape") {
       App.state.pendingConnectionStart = null;
+      App.state.selectedShentonPoint = null;
+      App.state.selectedScanCorner = null;
       App.setStatus("已取消当前连线");
     }
     if (event.key === "Tab") {
       event.preventDefault();
       App.selectNextPoint();
     }
+    if (event.key === "?") App.showShortcuts();
     if (event.key.toLowerCase() === "v") App.setTool("select");
     if (event.key.toLowerCase() === "p") App.setTool("point");
+    if (event.key.toLowerCase() === "r") App.setTool("roi");
+    if (event.key.toLowerCase() === "c") App.setTool("scan");
     if (event.key.toLowerCase() === "l") App.setTool("line");
-    if (event.key.toLowerCase() === "h") App.state.showLabels = !App.state.showLabels;
+    if (event.key.toLowerCase() === "s") App.setTool("shenton");
+    if (event.key.toLowerCase() === "e") App.setImageView(App.state.imageView === "enhanced" ? "original" : "enhanced");
+    if (event.key.toLowerCase() === "d") App.handleAutoDetectCurrent();
+    if (event.key.toLowerCase() === "f") {
+      if (App.state.activeTool === "scan" && App.currentScanTransform()) App.fitToScanTransform();
+      else if (App.state.activeTool === "roi" && App.currentRoiCrop()) App.fitToRoi();
+      else App.fitToScreen();
+    }
+    if (event.key.toLowerCase() === "h") {
+      App.state.showLabels = !App.state.showLabels;
+      App.syncDisplayToggles();
+    }
   },
 
   handleKeyUp: (event) => {
     if (event.code === "Space") {
       App.state.spaceHeld = false;
       document.getElementById("mainCanvas").style.cursor =
-        App.state.activeTool === "point" || App.state.activeTool === "line" ? "crosshair" : "default";
+        App.state.activeTool === "point" || App.state.activeTool === "line" || App.state.activeTool === "shenton" || App.state.activeTool === "roi"
+          ? "crosshair"
+          : "default";
     }
   },
 
@@ -1183,6 +1732,44 @@ const App = {
     return best;
   },
 
+  hitTestShentonPoint: (x, y) => {
+    if (!App.state.annotation) return null;
+    App.normalizeShenton(App.state.annotation);
+    let best = null;
+    let bestDistance = Infinity;
+    ["left", "right"].forEach((side) => {
+      ["obturator_upper_curve", "femoral_neck_inner_lower_curve"].forEach((segmentKey) => {
+        const points = App.state.annotation.shenton_curves[side]?.[segmentKey]?.points || [];
+        points.forEach((point, index) => {
+          const view = App.toViewportCoords(point.x, point.y);
+          const distance = Math.hypot(view.x - x, view.y - y);
+          if (distance < 12 && distance < bestDistance) {
+            best = { side, segment: segmentKey, index };
+            bestDistance = distance;
+          }
+        });
+      });
+    });
+    return best;
+  },
+
+  hitTestScanCorner: (x, y) => {
+    if (!App.state.annotation) return null;
+    App.normalizeScanTransform(App.state.annotation);
+    const corners = App.state.annotation.scan_transform?.corners || [];
+    let best = null;
+    let bestDistance = Infinity;
+    corners.forEach((point, index) => {
+      const view = App.toViewportCoords(point.x, point.y);
+      const distance = Math.hypot(view.x - x, view.y - y);
+      if (distance < 14 && distance < bestDistance) {
+        best = index;
+        bestDistance = distance;
+      }
+    });
+    return best;
+  },
+
   hitTestConnection: (x, y) => {
     let best = null;
     let bestDistance = Infinity;
@@ -1221,6 +1808,221 @@ const App = {
     };
   },
 
+  currentRoiCrop: () => {
+    const roi = App.state.annotation?.roi_crop;
+    if (!roi?.enabled || roi.x === null || roi.y === null || roi.width === null || roi.height === null) return null;
+    return roi;
+  },
+
+  normalizedRoiBox: (start, end) => {
+    if (!App.state.image) return null;
+    const x1 = App.clamp(Math.min(start.x, end.x), 0, App.state.image.width);
+    const y1 = App.clamp(Math.min(start.y, end.y), 0, App.state.image.height);
+    const x2 = App.clamp(Math.max(start.x, end.x), 0, App.state.image.width);
+    const y2 = App.clamp(Math.max(start.y, end.y), 0, App.state.image.height);
+    const width = x2 - x1;
+    const height = y2 - y1;
+    if (width < 8 || height < 8) return null;
+    return { x: x1, y: y1, width, height };
+  },
+
+  setRoiCrop: (box) => {
+    if (!App.state.annotation || !box) return;
+    App.state.annotation.roi_crop = {
+      enabled: true,
+      x: Number(box.x.toFixed(2)),
+      y: Number(box.y.toFixed(2)),
+      width: Number(box.width.toFixed(2)),
+      height: Number(box.height.toFixed(2)),
+      source: "manual",
+      updated_at: new Date().toISOString(),
+      annotator: document.getElementById("annotatorInput").value.trim() || "default",
+    };
+    App.renderRoiPanel();
+  },
+
+  clearRoiCrop: () => {
+    if (!App.state.annotation) return;
+    App.pushHistory();
+    App.state.annotation.roi_crop = {
+      enabled: false,
+      x: null,
+      y: null,
+      width: null,
+      height: null,
+      source: "manual",
+      updated_at: new Date().toISOString(),
+      annotator: document.getElementById("annotatorInput").value.trim() || "default",
+    };
+    App.state.roiDraft = null;
+    App.renderRoiPanel();
+    App.pushHistory();
+    App.scheduleAutosave();
+    App.setStatus("ROI 已清空，自动识别将使用全图");
+  },
+
+  fitToRoi: () => {
+    const roi = App.currentRoiCrop();
+    if (!roi) {
+      App.fitToScreen();
+      App.setStatus("当前没有 ROI，已适配全图");
+      return;
+    }
+    const canvas = document.getElementById("mainCanvas");
+    const rect = canvas.getBoundingClientRect();
+    const scale = Math.min(rect.width / roi.width, rect.height / roi.height) * 0.88;
+    App.state.transform = {
+      x: (rect.width - roi.width * scale) / 2 - roi.x * scale,
+      y: (rect.height - roi.height * scale) / 2 - roi.y * scale,
+      scale,
+    };
+  },
+
+  renderRoiPanel: () => {
+    const target = document.getElementById("roiHintText");
+    if (!target) return;
+    const roi = App.currentRoiCrop();
+    if (!roi) {
+      target.textContent = "拖拽画出需要关注的 X 光区域；识别会优先在 ROI 内重试，保存仍使用原图坐标。";
+      return;
+    }
+    target.textContent = `已启用 ROI：x ${roi.x.toFixed(0)}, y ${roi.y.toFixed(0)}, ${roi.width.toFixed(0)} × ${roi.height.toFixed(0)}；识别会优先使用该区域。`;
+  },
+
+  currentScanTransform: () => {
+    const scan = App.state.annotation?.scan_transform;
+    if (!scan || !Array.isArray(scan.corners) || scan.corners.length !== 4 || !scan.enabled) return null;
+    return scan;
+  },
+
+  scanPolygonArea: (corners) => {
+    if (!Array.isArray(corners) || corners.length < 3) return 0;
+    let area = 0;
+    corners.forEach((point, index) => {
+      const next = corners[(index + 1) % corners.length];
+      area += point.x * next.y - next.x * point.y;
+    });
+    return Math.abs(area) / 2;
+  },
+
+  orderScanCorners: (corners) => {
+    if (!Array.isArray(corners) || corners.length !== 4) return corners || [];
+    const metrics = corners.map((point, index) => ({
+      point,
+      index,
+      sum: point.x + point.y,
+      diff: point.y - point.x,
+    }));
+    const pick = (sorter) => [...metrics].sort(sorter)[0];
+    const ordered = [
+      pick((a, b) => a.sum - b.sum),
+      pick((a, b) => a.diff - b.diff),
+      pick((a, b) => b.sum - a.sum),
+      pick((a, b) => b.diff - a.diff),
+    ];
+    if (new Set(ordered.map((item) => item.index)).size !== 4) return corners;
+    return ordered.map((item) => ({ x: item.point.x, y: item.point.y }));
+  },
+
+  addScanCorner: (imagePos) => {
+    if (!App.state.annotation || !App.state.image) return;
+    App.normalizeScanTransform(App.state.annotation);
+    const scan = App.state.annotation.scan_transform;
+    if (scan.corners.length >= 4) {
+      App.setStatus("扫描四角已完整，可拖拽调整或清空重画");
+      return;
+    }
+    App.pushHistory();
+    scan.corners.push({
+      x: Number(App.clamp(imagePos.x, 0, App.state.image.width).toFixed(2)),
+      y: Number(App.clamp(imagePos.y, 0, App.state.image.height).toFixed(2)),
+    });
+    if (scan.corners.length === 4) {
+      scan.corners = App.orderScanCorners(scan.corners);
+      scan.enabled = App.scanPolygonArea(scan.corners) >= 64;
+    }
+    scan.updated_at = new Date().toISOString();
+    scan.annotator = document.getElementById("annotatorInput").value.trim() || "default";
+    App.state.selectedScanCorner = scan.corners.length - 1;
+    App.renderScanPanel();
+    App.updateSelectedBox();
+    App.pushHistory();
+    App.scheduleAutosave();
+  },
+
+  clearScanTransform: () => {
+    if (!App.state.annotation) return;
+    App.pushHistory();
+    App.state.annotation.scan_transform = {
+      enabled: false,
+      corners: [],
+      mode: "manual_four_corners",
+      source: "manual",
+      updated_at: new Date().toISOString(),
+      annotator: document.getElementById("annotatorInput").value.trim() || "default",
+    };
+    App.state.selectedScanCorner = null;
+    App.renderScanPanel();
+    App.updateSelectedBox();
+    App.pushHistory();
+    App.scheduleAutosave();
+    App.setStatus("扫描四角已清空");
+  },
+
+  deleteSelectedScanCorner: () => {
+    if (!App.state.annotation || App.state.selectedScanCorner === null) return;
+    App.normalizeScanTransform(App.state.annotation);
+    const scan = App.state.annotation.scan_transform;
+    if (!scan.corners[App.state.selectedScanCorner]) return;
+    App.pushHistory();
+    scan.corners.splice(App.state.selectedScanCorner, 1);
+    scan.enabled = false;
+    scan.updated_at = new Date().toISOString();
+    App.state.selectedScanCorner = null;
+    App.renderScanPanel();
+    App.updateSelectedBox();
+    App.pushHistory();
+    App.scheduleAutosave();
+  },
+
+  fitToScanTransform: () => {
+    const scan = App.currentScanTransform();
+    if (!scan) {
+      App.fitToScreen();
+      App.setStatus("当前没有完整扫描四角，已适配全图");
+      return;
+    }
+    const xs = scan.corners.map((point) => point.x);
+    const ys = scan.corners.map((point) => point.y);
+    const box = {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      width: Math.max(...xs) - Math.min(...xs),
+      height: Math.max(...ys) - Math.min(...ys),
+    };
+    const canvas = document.getElementById("mainCanvas");
+    const rect = canvas.getBoundingClientRect();
+    const scale = Math.min(rect.width / box.width, rect.height / box.height) * 0.88;
+    App.state.transform = {
+      x: (rect.width - box.width * scale) / 2 - box.x * scale,
+      y: (rect.height - box.height * scale) / 2 - box.y * scale,
+      scale,
+    };
+  },
+
+  renderScanPanel: () => {
+    const target = document.getElementById("scanHintText");
+    if (!target || !App.state.annotation) return;
+    App.normalizeScanTransform(App.state.annotation);
+    const scan = App.state.annotation.scan_transform;
+    if (scan.enabled) {
+      target.textContent = "扫描四角已启用；自动识别会先透视校正，再映射回原图坐标。";
+      return;
+    }
+    const next = SCAN_CORNER_LABELS[scan.corners.length] || "完成";
+    target.textContent = `依次点击片子左上、右上、右下、左下四个角；当前 ${scan.corners.length}/4，下一个：${next}。`;
+  },
+
   drawLoop: () => {
     App.draw();
     requestAnimationFrame(App.drawLoop);
@@ -1246,12 +2048,85 @@ const App = {
     ctx.translate(App.state.transform.x, App.state.transform.y);
     ctx.scale(App.state.transform.scale, App.state.transform.scale);
     ctx.drawImage(App.state.image, 0, 0);
+    App.drawRoiCrop(ctx);
+    App.drawScanTransform(ctx);
     App.drawConnections(ctx);
+    App.drawShentonCurves(ctx);
+    App.drawMeasurementLines(ctx);
     App.drawPoints(ctx);
     ctx.restore();
   },
 
-  visibleConnections: () => (App.state.annotation?.connections || []).filter((item) => item.visible !== false),
+  visibleConnections: () =>
+    (App.state.annotation?.connections || []).filter((item) => {
+      if (item.visible === false) return false;
+      if (item.source === "default") return App.state.showDefaultConnections;
+      if (item.source === "manual") return App.state.showManualConnections;
+      return true;
+    }),
+
+  drawRoiCrop: (ctx) => {
+    const roi = App.state.roiDraft || App.currentRoiCrop();
+    if (!roi) return;
+    const inv = 1 / App.state.transform.scale;
+    ctx.save();
+    ctx.strokeStyle = App.state.roiDraft ? "#ffd43b" : "#40c057";
+    ctx.lineWidth = 2.4 * inv;
+    ctx.setLineDash([8 * inv, 5 * inv]);
+    ctx.strokeRect(roi.x, roi.y, roi.width, roi.height);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(64, 192, 87, 0.08)";
+    ctx.fillRect(roi.x, roi.y, roi.width, roi.height);
+    ctx.font = `${13 * inv}px sans-serif`;
+    ctx.lineWidth = 3 * inv;
+    const label = App.state.roiDraft ? "ROI" : "ROI 识别区域";
+    ctx.strokeStyle = "rgba(0,0,0,0.75)";
+    ctx.strokeText(label, roi.x + 8 * inv, Math.max(14 * inv, roi.y - 8 * inv));
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(label, roi.x + 8 * inv, Math.max(14 * inv, roi.y - 8 * inv));
+    ctx.restore();
+  },
+
+  drawScanTransform: (ctx) => {
+    const scan = App.state.annotation?.scan_transform;
+    if (!scan || !Array.isArray(scan.corners) || !scan.corners.length) return;
+    const inv = 1 / App.state.transform.scale;
+    const corners = scan.corners;
+    ctx.save();
+    if (corners.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(corners[0].x, corners[0].y);
+      corners.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+      if (corners.length === 4) ctx.closePath();
+      ctx.strokeStyle = scan.enabled ? "#15aabf" : "#ffd43b";
+      ctx.lineWidth = 2.5 * inv;
+      ctx.setLineDash(scan.enabled ? [] : [7 * inv, 4 * inv]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (scan.enabled) {
+        ctx.fillStyle = "rgba(21, 170, 191, 0.08)";
+        ctx.fill();
+      }
+    }
+    corners.forEach((point, index) => {
+      const selected = App.state.selectedScanCorner === index;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, (selected ? 6.2 : 4.8) * inv, 0, Math.PI * 2);
+      ctx.fillStyle = selected ? "#ffffff" : "#15aabf";
+      ctx.fill();
+      ctx.lineWidth = (selected ? 2.8 : 1.7) * inv;
+      ctx.strokeStyle = "#083344";
+      ctx.stroke();
+      ctx.font = `${12 * inv}px sans-serif`;
+      ctx.lineWidth = 3 * inv;
+      const label = SCAN_CORNER_LABELS[index] || `${index + 1}`;
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.72)";
+      ctx.strokeText(label, point.x + 8 * inv, point.y - 8 * inv);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(label, point.x + 8 * inv, point.y - 8 * inv);
+    });
+    ctx.restore();
+  },
 
   drawConnections: (ctx) => {
     if (!App.state.annotation) return;
@@ -1270,6 +2145,124 @@ const App = {
       ctx.stroke();
       ctx.setLineDash([]);
     });
+  },
+
+  drawShentonCurves: (ctx) => {
+    if (!App.state.annotation || !App.state.showShenton) return;
+    App.normalizeShenton(App.state.annotation);
+    const inv = 1 / App.state.transform.scale;
+    ["left", "right"].forEach((side) => {
+      ["obturator_upper_curve", "femoral_neck_inner_lower_curve"].forEach((segmentKey) => {
+        const points = App.state.annotation.shenton_curves[side]?.[segmentKey]?.points || [];
+        if (!points.length) return;
+        const color = App.shentonColor(side, segmentKey);
+        if (points.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+          points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2.2 * inv;
+          ctx.setLineDash(segmentKey === "obturator_upper_curve" ? [] : [7 * inv, 4 * inv]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        points.forEach((point, index) => {
+          const selected =
+            App.state.selectedShentonPoint?.side === side &&
+            App.state.selectedShentonPoint?.segment === segmentKey &&
+            App.state.selectedShentonPoint?.index === index;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, (selected ? 5.8 : 4.3) * inv, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+          ctx.lineWidth = (selected ? 2.8 : 1.8) * inv;
+          ctx.strokeStyle = selected ? "#ffffff" : "rgba(0,0,0,0.72)";
+          ctx.stroke();
+        });
+      });
+    });
+  },
+
+  drawMeasurementLines: (ctx) => {
+    if (!App.state.annotation || !App.state.showMeasurements) return;
+    const inv = 1 / App.state.transform.scale;
+    ["left", "right"].forEach((side) => {
+      const pair = App.closestShentonEndpoints(side);
+      if (!pair) return;
+      const extension = App.currentShentonExtension(side);
+      if (extension) {
+        ctx.lineWidth = 1.6 * inv;
+        ctx.setLineDash([6 * inv, 4 * inv]);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.beginPath();
+        ctx.moveTo(pair.a.x, pair.a.y);
+        ctx.lineTo(extension.a.x, extension.a.y);
+        ctx.moveTo(pair.b.x, pair.b.y);
+        ctx.lineTo(extension.b.x, extension.b.y);
+        ctx.stroke();
+        ctx.setLineDash([3 * inv, 5 * inv]);
+        ctx.beginPath();
+        ctx.moveTo(extension.a.x, extension.a.y);
+        ctx.lineTo(extension.b.x, extension.b.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        [extension.a, extension.b].forEach((point) => {
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 4.2 * inv, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+          ctx.fill();
+          ctx.strokeStyle = "rgba(0, 0, 0, 0.65)";
+          ctx.lineWidth = 1.2 * inv;
+          ctx.stroke();
+        });
+        return;
+      }
+      ctx.beginPath();
+      ctx.moveTo(pair.a.x, pair.a.y);
+      ctx.lineTo(pair.b.x, pair.b.y);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+      ctx.lineWidth = 1.5 * inv;
+      ctx.setLineDash([3 * inv, 5 * inv]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+  },
+
+  currentShentonExtension: (side) => {
+    const item = App.state.annotation?.measurements_snapshot?.shenton?.[side];
+    const points = item?.extension_points_px;
+    const a = points?.obturator_upper_curve;
+    const b = points?.femoral_neck_inner_lower_curve;
+    if (!a || !b || typeof a.x !== "number" || typeof a.y !== "number" || typeof b.x !== "number" || typeof b.y !== "number") {
+      return null;
+    }
+    return { a, b };
+  },
+
+  closestShentonEndpoints: (side) => {
+    const sideCurves = App.state.annotation?.shenton_curves?.[side];
+    const obturator = sideCurves?.obturator_upper_curve?.points || [];
+    const femoral = sideCurves?.femoral_neck_inner_lower_curve?.points || [];
+    if (obturator.length < 1 || femoral.length < 1) return null;
+    const endpointsA = [obturator[0], obturator[obturator.length - 1]];
+    const endpointsB = [femoral[0], femoral[femoral.length - 1]];
+    let best = null;
+    let bestDistance = Infinity;
+    endpointsA.forEach((a) => {
+      endpointsB.forEach((b) => {
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        if (distance < bestDistance) {
+          best = { a, b };
+          bestDistance = distance;
+        }
+      });
+    });
+    return best;
+  },
+
+  shentonColor: (side, segmentKey) => {
+    if (segmentKey === "obturator_upper_curve") return side === "left" ? "#ff922b" : "#4dabf7";
+    return side === "left" ? "#ffd43b" : "#63e6be";
   },
 
   drawPoints: (ctx) => {
@@ -1346,6 +2339,7 @@ const App = {
     if (source === "manual") return "人工";
     if (source === "imported_label") return "导入";
     if (source === "pose11_side") return "模型";
+    if (source === "template_guess") return "模板";
     if (App.isEstimatedSource(source)) return "估计";
     return "缺失";
   },
@@ -1357,6 +2351,7 @@ const App = {
 
   isEstimatedSource: (source) =>
     source === "estimated" ||
+    source === "template_guess" ||
     source === "hippelvis_like_mask" ||
     source === "imported_label" ||
     source === "pose11_side",
@@ -1385,6 +2380,21 @@ const App = {
     const label = document.getElementById("selectedLabel");
     const coords = document.getElementById("selectedCoords");
     const connectionLabel = document.getElementById("selectedConnectionLabel");
+    if (App.state.annotation && App.state.selectedShentonPoint) {
+      const selected = App.state.selectedShentonPoint;
+      const point = App.state.annotation.shenton_curves?.[selected.side]?.[selected.segment]?.points?.[selected.index];
+      label.textContent = `${selected.side === "left" ? "左" : "右"} Shenton ${selected.segment === "obturator_upper_curve" ? "闭孔上缘" : "股骨颈内下缘"}`;
+      coords.textContent = point ? `${point.x.toFixed(1)}, ${point.y.toFixed(1)}` : "-";
+      connectionLabel.textContent = "未选中连线";
+      return;
+    }
+    if (App.state.annotation && App.state.selectedScanCorner !== null) {
+      const point = App.state.annotation.scan_transform?.corners?.[App.state.selectedScanCorner];
+      label.textContent = `扫描四角 ${SCAN_CORNER_LABELS[App.state.selectedScanCorner] || App.state.selectedScanCorner + 1}`;
+      coords.textContent = point ? `${point.x.toFixed(1)}, ${point.y.toFixed(1)}` : "-";
+      connectionLabel.textContent = "未选中连线";
+      return;
+    }
     if (!App.state.annotation || !App.state.selectedPoint) {
       label.textContent = "-";
       coords.textContent = App.state.activeTool === "line" && App.state.pendingConnectionStart ? "请选择第二个点" : "-";
@@ -1409,7 +2419,10 @@ const App = {
   renderWarnings: () => {
     const container = document.getElementById("warningList");
     container.innerHTML = "";
-    const warnings = App.state.annotation?.auto_initialization?.warnings || [];
+    const warnings = [
+      ...(App.state.annotation?.auto_initialization?.warnings || []),
+      ...(App.state.annotation?.image?.dicom_warnings || []),
+    ];
     warnings.forEach((warning) => {
       const item = document.createElement("div");
       item.className = "warning-item";

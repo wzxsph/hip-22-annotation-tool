@@ -26,6 +26,40 @@ def test_annotation_round_trip_preserves_template_and_extra_fields(tmp_path):
     assert loaded.review["note"] == "checked"
 
 
+def test_shenton_round_trip_preserves_more_than_six_curve_points(tmp_path):
+    annotation = create_blank_annotation("case.png", 640, 480, annotator="doctor-a")
+    points = [{"x": float(idx * 10), "y": float(100 + idx)} for idx in range(9)]
+    annotation.shenton_curves["left"]["obturator_upper_curve"]["points"] = points
+
+    save_annotation(annotation, tmp_path)
+    loaded = load_annotation("case.png", tmp_path)
+
+    assert loaded is not None
+    assert loaded.shenton_curves["left"]["obturator_upper_curve"]["points"] == points
+
+
+def test_roi_crop_round_trip_preserves_original_image_coordinates(tmp_path):
+    annotation = create_blank_annotation("case.png", 100, 80, annotator="doctor-a")
+    annotation.roi_crop = {
+        "enabled": True,
+        "x": 12.5,
+        "y": 9.25,
+        "width": 50.0,
+        "height": 40.0,
+        "source": "manual",
+        "updated_at": "2026-07-05T00:00:00Z",
+        "annotator": "doctor-a",
+    }
+
+    save_annotation(annotation, tmp_path)
+    loaded = load_annotation("case.png", tmp_path)
+
+    assert loaded is not None
+    assert loaded.roi_crop["enabled"] is True
+    assert loaded.roi_crop["x"] == 12.5
+    assert loaded.roi_crop["width"] == 50.0
+
+
 def test_legacy_minimal_point_payload_loads_without_losing_known_fields(tmp_path):
     annotations_dir = tmp_path / "annotations"
     annotations_dir.mkdir()

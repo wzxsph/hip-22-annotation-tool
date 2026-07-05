@@ -6,6 +6,8 @@ This repository is the standalone public annotation tool. Keep it clean, small, 
 
 - This repo contains only the FastAPI + Canvas annotation app, tests, docs, screenshots, and the bundled `models/yolo11n-best.pt` weight.
 - Do not import or copy code from `reference/hip_demo`, `reference/retuve-yolo-plugin`, or the parent training project.
+- The v0.2 image-enhancement path may reproduce the agreed hip_demo-style processing idea, but do not vendor the reference project or copy unrelated code/weights.
+- Do not bundle `reference/retuve-yolo-plugin` segmentation weights in this repository or release package. Use it only as research context unless licensing and clinical scope are explicitly resolved.
 - Do not add hospital private data, raw patient data, MTDDH original images, training folders, local workspaces, or generated annotation batches.
 - Generated Windows ZIPs belong in GitHub Release assets, not in git history.
 
@@ -15,8 +17,10 @@ This repository is the standalone public annotation tool. Keep it clean, small, 
 - Default weight path: `models/yolo11n-best.pt`.
 - Users may override the model with `HIP22_MODEL_PATH`.
 - Device selection uses `HIP22_DEVICE` or `HIP22_MODEL_DEVICE`; unset means CUDA first, then CPU.
-- If the model or `ultralytics` is unavailable, return a blank 22-point template with warnings. Never raise a 500 just because inference is unavailable.
+- If the model or `ultralytics` is unavailable, keep the app usable and add low-confidence `template_guess` points with warnings. Never raise a 500 just because inference is unavailable.
 - The current-image `Auto Detect` UI action should preserve existing manual points and may use partial model results as review candidates.
+- `Enhanced Detect` must preserve manual points and record that enhanced preprocessing was used.
+- Template fallback points are draggable starting positions only. Record `auto_initialization.template_fallback` and do not present them as model confidence or clinical truth.
 
 ## Git LFS And Download ZIP
 
@@ -32,7 +36,24 @@ This repository is the standalone public annotation tool. Keep it clean, small, 
 - `left_*` means image-left, `right_*` means image-right. Do not perform anatomical side swapping.
 - Missing points are explicit: `x=null`, `y=null`, `visible=false`, `visibility=0`, `source="missing"`.
 - Missingness is determined by visibility and coordinates, not by `source`.
+- `source="template_guess"` means a low-confidence fallback point generated from normalized demo medians. It must be visually distinct from `pose11_side` model output and `manual` doctor edits.
 - Existing `annotations/<stem>.json` or same-folder `<stem>.txt` must load before auto-detection and must not be overwritten by background inference.
+- DICOM metadata saved in annotations must be non-PHI only: source format, pixel spacing, spacing source, dimensions, and warnings. Do not store patient name, patient ID, accession number, birth date, institution, or free-text clinical identifiers.
+- `roi_crop` is a non-destructive original-image-coordinate rectangle. Enhanced display, DICOM rendering, and ROI-based inference must map all saved points back to original image pixel coordinates.
+- `scan_transform` is a non-destructive four-corner perspective transform for phone-shot X-rays. Recognition may run on the warped scan-like view, but saved keypoints must be inverse-mapped back to original image pixel coordinates.
+- Shenton curves are research/review-aid data. Do not present `continuous_candidate` as a clinical diagnosis or validated threshold.
+- Keep default guide connections hidden by default in the UI; doctors can enable them when needed, but the main view should avoid occluding bone boundaries.
+
+## Storage Format Notes
+
+- Main annotation files live at `annotations/<image_stem>.json`; same-folder YOLO Pose labels live at `<image_stem>.txt`.
+- Workspace bookkeeping lives in `manifest.json`, `data.yaml`, `splits/train_val_split.json`, and generated progress files named `HIP22_STATUS_DONE_<n>_TODO_<m>.txt`, `HIP22_status_report.html`, `HIP22_status_report.csv`, and `HIP22_SUBMISSION_README.txt`.
+- Annotation JSON may contain `image`, `keypoints`, `connections`, `roi_crop`, `scan_transform`, `shenton_curves`, `shenton_review`, `measurements_snapshot`, `auto_initialization`, and `review`.
+- `measurements_snapshot` may include Shenton endpoint gap, Shenton forward-extension gap, AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, and acetabular depth. Use DICOM PixelSpacing for mm output when available, and keep all formulas labeled as review aids.
+- `auto_initialization` should include model source, attempts, warnings, preprocessing label, ROI or scan transform used for retry, original model visible count, and template fallback metadata when applicable.
+- Enhanced/DICOM display PNGs should be cached under local user data, not inside the submitted workspace or git history.
+- `scripts/prepare_scan_like_images.py` is an internal data-organization tool for phone-shot images. Its outputs are derived local files; do not commit them unless explicit permission and de-identification are confirmed.
+- Do not commit source demo images or local annotation JSON/TXT used to derive the template. Only the normalized numeric template may live in the repository.
 
 ## Public Repository Hygiene
 

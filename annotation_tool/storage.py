@@ -6,8 +6,6 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image, ImageOps
-
 from .paths import default_dataset_root, runtime_root
 from .schema import Annotation, Manifest, ManifestImage, annotation_from_dict, model_to_dict, normalize_split, utc_now
 
@@ -196,11 +194,10 @@ def load_annotation_from_yolo_label(
     if label_file is None:
         return None
     from .yolo_export import annotation_from_yolo_text
+    from .image_io import read_supported_image
 
     try:
-        image = Image.open(image_path)
-        image = ImageOps.exif_transpose(image)
-        image.load()
+        image, metadata = read_supported_image(image_path)
     except Exception:
         return None
     text = label_file.read_text(encoding="utf-8")
@@ -211,6 +208,8 @@ def load_annotation_from_yolo_label(
         int(image.height),
         annotator=annotator,
     )
+    for key, value in metadata.items():
+        setattr(annotation.image, key, value)
     return annotation
 
 

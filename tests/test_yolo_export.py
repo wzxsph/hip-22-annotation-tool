@@ -1,4 +1,5 @@
 from annotation_tool.schema import create_blank_annotation, make_keypoint
+from annotation_tool.template_points import template_keypoints_for_image
 from annotation_tool.yolo_export import annotation_to_yolo_lines, data_yaml_text
 
 
@@ -38,6 +39,19 @@ def test_data_yaml_matches_11_class_pose_contract():
     assert "val: ." in text
     assert "0: acetabular_outer" in text
     assert "10: femoral_neck_inner_lower" in text
+
+
+def test_template_guess_points_export_as_valid_yolo_coordinates():
+    annotation = create_blank_annotation("case.png", 1000, 500)
+    annotation.keypoints.update(template_keypoints_for_image(1000, 500))
+
+    lines = annotation_to_yolo_lines(annotation)
+
+    assert len(lines) == 11
+    for line in lines:
+        values = [float(value) for value in line.split()[1:]]
+        for value in values:
+            assert 0 <= value <= 2
 
 
 def test_export_zip_data_yaml_can_keep_standard_image_paths():

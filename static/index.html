@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>22 点髋关节 X 光标注</title>
-    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/style.css?v=scan-shenton-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -16,12 +16,13 @@
         <div class="top-actions">
           <label class="button primary">
             打开图像
-            <input id="fileInput" type="file" accept="image/*" hidden />
+            <input id="fileInput" type="file" accept="image/*,.dcm,.dicom" hidden />
           </label>
           <button id="btnFolder" type="button">导入文件夹</button>
           <button id="btnSave" type="button">保存</button>
           <button id="btnAutoDetect" type="button" title="对当前图片重新运行自动识别；保留已经人工修改的点">自动识别</button>
-          <button id="btnExportYolo" type="button" title="团队整理或训练使用；医生提交时直接发送整个文件夹即可">团队导出</button>
+          <button id="btnAutoDetectEnhanced" type="button" title="用增强预览图重试自动识别；仅辅助识别，不覆盖原图">增强识别</button>
+          <button id="btnShortcutHelp" type="button" title="查看快捷键">快捷键</button>
           <button id="btnUndo" type="button" aria-label="撤销">↶</button>
           <button id="btnRedo" type="button" aria-label="重做">↷</button>
         </div>
@@ -42,9 +43,53 @@
           <div class="tool-row" role="group" aria-label="工具">
             <button class="tool-button active" data-tool="select" type="button">选择</button>
             <button class="tool-button" data-tool="point" type="button">放点</button>
+            <button class="tool-button" data-tool="roi" type="button">ROI</button>
+            <button class="tool-button" data-tool="scan" type="button">扫描</button>
             <button class="tool-button" data-tool="line" type="button">连线</button>
+            <button class="tool-button" data-tool="shenton" type="button">Shenton</button>
             <button id="btnFit" type="button">适配</button>
             <button id="btnToggleLabels" type="button">编号</button>
+          </div>
+          <div class="roi-toolbox" id="roiToolbox" hidden>
+            <div class="settings-title">关注区域 ROI</div>
+            <div class="roi-actions">
+              <button id="btnRoiFit" type="button">适配 ROI</button>
+              <button id="btnRoiClear" type="button">清空 ROI</button>
+            </div>
+            <small id="roiHintText">拖拽画出需要关注的 X 光区域；识别会优先在 ROI 内重试，保存仍使用原图坐标。</small>
+          </div>
+          <div class="scan-toolbox" id="scanToolbox" hidden>
+            <div class="settings-title">类扫描校正</div>
+            <div class="scan-actions">
+              <button id="btnScanFit" type="button">适配扫描区</button>
+              <button id="btnScanClear" type="button">清空四角</button>
+            </div>
+            <small id="scanHintText">依次点击片子左上、右上、右下、左下四个角；自动识别会先透视校正，再映射回原图坐标。</small>
+          </div>
+          <div class="shenton-toolbox" id="shentonToolbox" hidden>
+            <div class="settings-title">Shenton 曲线</div>
+            <div class="segmented-row" role="group" aria-label="Shenton 侧别">
+              <button class="active" type="button" data-shenton-side="left">图像左侧</button>
+              <button type="button" data-shenton-side="right">图像右侧</button>
+            </div>
+            <div class="segmented-row" role="group" aria-label="Shenton 曲线段">
+              <button class="active" type="button" data-shenton-segment="obturator_upper_curve">闭孔上缘</button>
+              <button type="button" data-shenton-segment="femoral_neck_inner_lower_curve">股骨颈内下缘</button>
+            </div>
+            <div class="shenton-actions">
+              <button id="btnShentonUndo" type="button">撤销点</button>
+              <button id="btnShentonClear" type="button">清空段</button>
+            </div>
+            <label class="shenton-review-row" for="shentonReviewSelect">
+              医生判断
+              <select id="shentonReviewSelect">
+                <option value="not_reviewed">未复核</option>
+                <option value="continuous">连续</option>
+                <option value="discontinuous">不连续</option>
+                <option value="uncertain">不确定</option>
+              </select>
+            </label>
+            <small id="shentonHintText">每侧两段曲线，每段至少 3 个点，点越多越贴合曲线；本功能仅用于研究复核辅助。</small>
           </div>
           <div class="point-groups" id="pointGroups"></div>
         </aside>
@@ -52,6 +97,10 @@
         <section class="canvas-column">
           <div class="canvas-toolbar">
             <div class="image-title" id="imageTitle">未打开图像</div>
+            <div class="view-toggle" role="group" aria-label="图像显示模式">
+              <button class="active" type="button" data-image-view="enhanced">增强图</button>
+              <button type="button" data-image-view="original">原图</button>
+            </div>
             <div class="status-text" id="statusText">就绪</div>
           </div>
           <div class="canvas-wrap" id="canvasWrap">
@@ -108,6 +157,14 @@
             <strong id="selectedLabel">-</strong>
             <small id="selectedCoords">-</small>
           </div>
+          <div class="measurement-box">
+            <div class="settings-title">Shenton 与测量</div>
+            <div id="shentonSummaryText">尚未标注 Shenton 曲线</div>
+            <div id="clinicalParameterText">关键指标：等待关键点</div>
+            <small id="acetabularDepthText">髋臼深度：等待关键点；DICOM 标尺可显示毫米值</small>
+          </div>
+          <details class="advanced-box">
+            <summary>高级设置与团队导出</summary>
           <div class="settings-box">
             <div class="settings-title">工作流</div>
             <label class="toggle-row">
@@ -131,6 +188,28 @@
               <span>自动识别</span>
               <small id="autoDetectQueueText">未排队</small>
             </div>
+            <button id="btnExportYolo" type="button" title="团队整理或训练使用；医生提交时直接发送整个文件夹即可">团队导出 YOLO</button>
+            <div class="settings-title">显示</div>
+            <label class="toggle-row">
+              <input id="showDefaultConnectionsToggle" type="checkbox" />
+              <span>默认连线</span>
+            </label>
+            <label class="toggle-row">
+              <input id="showManualConnectionsToggle" type="checkbox" checked />
+              <span>人工连线</span>
+            </label>
+            <label class="toggle-row">
+              <input id="showShentonToggle" type="checkbox" checked />
+              <span>Shenton 曲线</span>
+            </label>
+            <label class="toggle-row">
+              <input id="showMeasurementsToggle" type="checkbox" checked />
+              <span>测量线与指标</span>
+            </label>
+            <label class="toggle-row">
+              <input id="showPointLabelsToggle" type="checkbox" checked />
+              <span>点编号</span>
+            </label>
           </div>
           <div class="connection-box">
             <div class="settings-title">连线</div>
@@ -138,6 +217,7 @@
             <button id="btnDeleteConnection" type="button">取消选中连线</button>
             <div id="connectionList" class="connection-list"></div>
           </div>
+          </details>
           <div class="warning-list" id="warningList"></div>
         </aside>
       </section>
@@ -164,6 +244,28 @@
       </form>
     </dialog>
 
-    <script src="/static/app.js?v=public-standalone-2"></script>
+    <dialog id="shortcutsDialog">
+      <form method="dialog" class="shortcut-dialog">
+        <h2>快捷键</h2>
+        <div class="shortcut-grid">
+          <span>V</span><span>选择/拖拽</span>
+          <span>P</span><span>放点</span>
+          <span>R</span><span>画 ROI</span>
+          <span>C</span><span>扫描四角</span>
+          <span>S</span><span>Shenton 曲线</span>
+          <span>E</span><span>增强图 / 原图</span>
+          <span>D</span><span>自动识别</span>
+          <span>F</span><span>适配当前图</span>
+          <span>Ctrl+S</span><span>保存</span>
+          <span>← / →</span><span>上一张 / 下一张</span>
+          <span>Delete</span><span>删除选中项或标记缺失</span>
+        </div>
+        <div class="dialog-actions">
+          <button value="default" type="submit">关闭</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/app.js?v=scan-shenton-1"></script>
   </body>
 </html>

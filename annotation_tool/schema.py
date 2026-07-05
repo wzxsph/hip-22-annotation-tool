@@ -101,12 +101,72 @@ class Connection(ExtraModel):
     annotator: str = ""
 
 
+def default_shenton_segment(*, annotator: str = "") -> dict[str, Any]:
+    return {
+        "type": "polyline",
+        "points": [],
+        "source": "manual",
+        "updated_at": utc_now(),
+        "annotator": annotator,
+    }
+
+
+def default_shenton_curves(*, annotator: str = "") -> dict[str, Any]:
+    return {
+        side: {
+            "obturator_upper_curve": default_shenton_segment(annotator=annotator),
+            "femoral_neck_inner_lower_curve": default_shenton_segment(annotator=annotator),
+        }
+        for side in SIDES
+    }
+
+
+def default_shenton_review(*, annotator: str = "") -> dict[str, Any]:
+    return {
+        side: {
+            "status": "not_reviewed",
+            "updated_at": utc_now(),
+            "annotator": annotator,
+        }
+        for side in SIDES
+    }
+
+
+def default_roi_crop(*, annotator: str = "") -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "x": None,
+        "y": None,
+        "width": None,
+        "height": None,
+        "source": "manual",
+        "updated_at": utc_now(),
+        "annotator": annotator,
+    }
+
+
+def default_scan_transform(*, annotator: str = "") -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "corners": [],
+        "mode": "manual_four_corners",
+        "source": "manual",
+        "updated_at": utc_now(),
+        "annotator": annotator,
+    }
+
+
 class ImageInfo(ExtraModel):
     filename: str
     width: int
     height: int
     split: str = "train"
+    source_format: str = "image"
     pixel_spacing_mm: Optional[float] = None
+    pixel_spacing_row_mm: Optional[float] = None
+    pixel_spacing_col_mm: Optional[float] = None
+    pixel_spacing_source: str = ""
+    dicom_warnings: List[str] = Field(default_factory=list)
     patient_position: str = "AP"
     side_convention: str = "image-left/right; left key is image-left"
 
@@ -125,6 +185,10 @@ class Annotation(ExtraModel):
     annotator: AnnotatorInfo = Field(default_factory=AnnotatorInfo)
     keypoints: Dict[str, Keypoint] = Field(default_factory=dict)
     connections: List[Connection] = Field(default_factory=list)
+    shenton_curves: Dict[str, Any] = Field(default_factory=default_shenton_curves)
+    shenton_review: Dict[str, Any] = Field(default_factory=default_shenton_review)
+    roi_crop: Dict[str, Any] = Field(default_factory=default_roi_crop)
+    scan_transform: Dict[str, Any] = Field(default_factory=default_scan_transform)
     auto_initialization: Dict[str, Any] = Field(default_factory=dict)
     measurements_snapshot: Dict[str, Any] = Field(default_factory=dict)
     review: Dict[str, Any] = Field(default_factory=dict)
@@ -309,6 +373,134 @@ def normalize_connections(annotation: Annotation) -> Annotation:
     return annotation
 
 
+def normalize_shenton(annotation: Annotation) -> Annotation:
+    annotator = annotation.annotator.user_id if annotation.annotator else ""
+    raw_curves = annotation.shenton_curves if isinstance(annotation.shenton_curves, dict) else {}
+    normalized_curves = default_shenton_curves(annotator=annotator)
+    for side in SIDES:
+        raw_side = raw_curves.get(side, {}) if isinstance(raw_curves.get(side, {}), dict) else {}
+        for segment_key in ("obturator_upper_curve", "femoral_neck_inner_lower_curve"):
+            raw_segment = raw_side.get(segment_key, {}) if isinstance(raw_side.get(segment_key, {}), dict) else {}
+            segment = default_shenton_segment(annotator=annotator)
+            points = raw_segment.get("points", [])
+            segment.update(
+                {
+                    "type": raw_segment.get("type") or "polyline",
+                    "points": points if isinstance(points, list) else [],
+                    "source": raw_segment.get("source") or "manual",
+                    "updated_at": raw_segment.get("updated_at") or utc_now(),
+                    "annotator": raw_segment.get("annotator") or annotator,
+                }
+            )
+            normalized_curves[side][segment_key] = segment
+    annotation.shenton_curves = normalized_curves
+
+    raw_review = annotation.shenton_review if isinstance(annotation.shenton_review, dict) else {}
+    normalized_review = default_shenton_review(annotator=annotator)
+    allowed_status = {"continuous", "discontinuous", "uncertain", "not_reviewed"}
+    for side in SIDES:
+        raw_side = raw_review.get(side, {}) if isinstance(raw_review.get(side, {}), dict) else {}
+        status = raw_side.get("status") or "not_reviewed"
+        if status not in allowed_status:
+            status = "not_reviewed"
+        normalized_review[side] = {
+            "status": status,
+            "updated_at": raw_side.get("updated_at") or utc_now(),
+            "annotator": raw_side.get("annotator") or annotator,
+        }
+    annotation.shenton_review = normalized_review
+    return annotation
+
+
+def normalize_roi_crop(annotation: Annotation) -> Annotation:
+    annotator = annotation.annotator.user_id if annotation.annotator else ""
+    raw = annotation.roi_crop if isinstance(annotation.roi_crop, dict) else {}
+    normalized = default_roi_crop(annotator=annotator)
+    normalized.update(
+        {
+            "source": raw.get("source") or "manual",
+            "updated_at": raw.get("updated_at") or utc_now(),
+            "annotator": raw.get("annotator") or annotator,
+        }
+    )
+    enabled = bool(raw.get("enabled", False))
+    try:
+        x = float(raw.get("x"))
+        y = float(raw.get("y"))
+        width = float(raw.get("width"))
+        height = float(raw.get("height"))
+    except (TypeError, ValueError):
+        enabled = False
+    else:
+        image_width = max(1.0, float(annotation.image.width or 1))
+        image_height = max(1.0, float(annotation.image.height or 1))
+        x = max(0.0, min(image_width, x))
+        y = max(0.0, min(image_height, y))
+        width = max(0.0, min(image_width - x, width))
+        height = max(0.0, min(image_height - y, height))
+        enabled = enabled and width >= 8 and height >= 8
+        normalized.update(
+            {
+                "x": round(x, 3),
+                "y": round(y, 3),
+                "width": round(width, 3),
+                "height": round(height, 3),
+            }
+        )
+    normalized["enabled"] = enabled
+    if not enabled:
+        normalized.update({"x": None, "y": None, "width": None, "height": None})
+    annotation.roi_crop = normalized
+    return annotation
+
+
+def normalize_scan_transform(annotation: Annotation) -> Annotation:
+    annotator = annotation.annotator.user_id if annotation.annotator else ""
+    raw = annotation.scan_transform if isinstance(annotation.scan_transform, dict) else {}
+    normalized = default_scan_transform(annotator=annotator)
+    normalized.update(
+        {
+            "mode": raw.get("mode") or "manual_four_corners",
+            "source": raw.get("source") or "manual",
+            "updated_at": raw.get("updated_at") or utc_now(),
+            "annotator": raw.get("annotator") or annotator,
+        }
+    )
+    image_width = max(1.0, float(annotation.image.width or 1))
+    image_height = max(1.0, float(annotation.image.height or 1))
+    corners: list[dict[str, float]] = []
+    raw_corners = raw.get("corners", [])
+    if isinstance(raw_corners, dict):
+        raw_corners = [raw_corners.get(key) for key in ("top_left", "top_right", "bottom_right", "bottom_left")]
+    if isinstance(raw_corners, list):
+        for item in raw_corners[:4]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                x = float(item.get("x"))
+                y = float(item.get("y"))
+            except (TypeError, ValueError):
+                continue
+            x = max(0.0, min(image_width, x))
+            y = max(0.0, min(image_height, y))
+            corners.append({"x": round(x, 3), "y": round(y, 3)})
+    enabled = bool(raw.get("enabled", False)) and len(corners) == 4 and _polygon_area(corners) >= 64.0
+    normalized["enabled"] = enabled
+    normalized["corners"] = corners if enabled or corners else []
+    annotation.scan_transform = normalized
+    return annotation
+
+
+def _polygon_area(points: list[dict[str, float]]) -> float:
+    if len(points) < 3:
+        return 0.0
+    area = 0.0
+    for index, point in enumerate(points):
+        nxt = points[(index + 1) % len(points)]
+        area += point["x"] * nxt["y"] - nxt["x"] * point["y"]
+    return abs(area) / 2.0
+
+
 def ensure_keypoint_template(annotation: Annotation) -> Annotation:
     annotator = annotation.annotator.user_id if annotation.annotator else ""
     normalized: Dict[str, Keypoint] = {}
@@ -347,6 +539,9 @@ def ensure_keypoint_template(annotation: Annotation) -> Annotation:
     annotation.keypoints = normalized
     annotation.image.split = normalize_split(getattr(annotation.image, "split", "train"))
     normalize_connections(annotation)
+    normalize_shenton(annotation)
+    normalize_roi_crop(annotation)
+    normalize_scan_transform(annotation)
     return annotation
 
 

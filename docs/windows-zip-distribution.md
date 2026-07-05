@@ -8,7 +8,7 @@ Distribute `dist\Hip22AnnotationTool-v<version>-win64-cpu.zip` to the hospital. 
 2. Open the extracted `Hip22AnnotationTool` folder.
 3. Double-click `Hip22AnnotationTool.exe`.
 4. If the browser does not open, manually visit `http://127.0.0.1:8010/`.
-5. Import the image folder, review/drag keypoints, save, then send the whole annotated folder back.
+5. Import the image/DICOM folder, review/drag keypoints or Shenton curves, save, then send the whole annotated folder back.
 6. Use the right-side progress check and generated `HIP22_status_report.html` to confirm which images are still pending.
 
 ## Before Sharing
@@ -34,3 +34,5 @@ Do not share the ZIP unless the smoke test passes. In particular, the test must 
 - Browser does not open: manually visit the printed local URL.
 - Antivirus quarantine: re-extract the ZIP or allow the internal build after IT review.
 - Messy hospital folders: ask the hospital to send the photos first, then use `scripts/prepare_hospital_dataset.py` to flatten and rename them before returning the clean folder for annotation.
+- DICOM limitations: ordinary single-frame CR/DR grayscale DICOM is supported. Unsupported compressed/private formats should be reported from the app warning text instead of blocking the whole folder.
+- Shenton limitation: Shenton measurements are prerelease research aids only and must be reviewed by a doctor; they are not a clinical diagnosis.

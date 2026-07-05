@@ -52,3 +52,47 @@ def test_legacy_annotation_without_connections_gets_defaults_but_empty_list_is_p
 
     assert len(legacy.connections) == 25
     assert explicit_empty.connections == []
+
+
+def test_legacy_annotation_gets_shenton_defaults():
+    legacy = annotation_from_dict({"image": {"filename": "case.png", "width": 100, "height": 100}, "keypoints": {}})
+
+    assert legacy.shenton_curves["left"]["obturator_upper_curve"]["points"] == []
+    assert legacy.shenton_curves["right"]["femoral_neck_inner_lower_curve"]["points"] == []
+    assert legacy.shenton_review["left"]["status"] == "not_reviewed"
+
+
+def test_legacy_annotation_gets_roi_crop_default():
+    legacy = annotation_from_dict({"image": {"filename": "case.png", "width": 100, "height": 100}, "keypoints": {}})
+
+    assert legacy.roi_crop["enabled"] is False
+    assert legacy.roi_crop["x"] is None
+
+
+def test_legacy_annotation_gets_scan_transform_default():
+    legacy = annotation_from_dict({"image": {"filename": "case.png", "width": 100, "height": 100}, "keypoints": {}})
+
+    assert legacy.scan_transform["enabled"] is False
+    assert legacy.scan_transform["corners"] == []
+
+
+def test_scan_transform_normalizes_four_original_image_corners():
+    annotation = annotation_from_dict(
+        {
+            "image": {"filename": "case.png", "width": 100, "height": 80},
+            "keypoints": {},
+            "scan_transform": {
+                "enabled": True,
+                "corners": [
+                    {"x": -5, "y": 3},
+                    {"x": 95, "y": 4},
+                    {"x": 105, "y": 90},
+                    {"x": 4, "y": 75},
+                ],
+            },
+        }
+    )
+
+    assert annotation.scan_transform["enabled"] is True
+    assert annotation.scan_transform["corners"][0] == {"x": 0.0, "y": 3.0}
+    assert annotation.scan_transform["corners"][2] == {"x": 100.0, "y": 80.0}

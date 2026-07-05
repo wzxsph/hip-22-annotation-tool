@@ -31,6 +31,8 @@ powershell -ExecutionPolicy Bypass -File .\dist\smoke_test.ps1
 
 The smoke test extracts the ZIP, starts the exe with browser auto-open disabled, checks the HTTP endpoints, imports one demo image, runs model-assisted initialization, saves, and verifies JSON plus YOLO sidecar outputs.
 
+For v0.2.0, also verify one synthetic or de-identified DICOM if available: import the folder, open the DICOM through the browser UI, confirm the image renders, and confirm annotation JSON stores pixel spacing without patient identifiers.
+
 ## Runtime Data
 
 Packaged runtime settings and logs are stored under:

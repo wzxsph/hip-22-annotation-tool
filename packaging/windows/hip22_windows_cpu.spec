@@ -14,6 +14,7 @@ datas = [
 ]
 datas += collect_data_files("ultralytics", include_py_files=False)
 datas += collect_data_files("matplotlib", include_py_files=False)
+datas += collect_data_files("pydicom", include_py_files=False)
 
 binaries = []
 binaries += collect_dynamic_libs("torch")
@@ -24,6 +25,7 @@ hiddenimports = []
 hiddenimports += collect_submodules("annotation_tool")
 hiddenimports += collect_submodules("matplotlib")
 hiddenimports += collect_submodules("multipart")
+hiddenimports += collect_submodules("pydicom")
 hiddenimports += collect_submodules("ultralytics")
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += ["matplotlib.backends.backend_agg"]

@@ -25,4 +25,4 @@ Suggested citation:
 
 ## FastAPI and Python Runtime Packages
 
-The annotation server and UI use common Python and browser packages including FastAPI, Uvicorn, Pillow, NumPy, OpenCV, PyTest, and browser-native Canvas APIs. See `requirements.txt` and `pyproject.toml` for the install list.
+The annotation server and UI use common Python and browser packages including FastAPI, Uvicorn, Pillow, NumPy, OpenCV, PyTest, pydicom, and browser-native Canvas APIs. See `requirements.txt` and `pyproject.toml` for the install list.
