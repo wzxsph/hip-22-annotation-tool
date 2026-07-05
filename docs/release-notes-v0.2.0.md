@@ -17,7 +17,7 @@ This prerelease adds DICOM import, enhanced X-ray preview, reduced default line 
 - Adds a four-corner scan-like transform for phone-shot X-rays. Current-image auto-detect can run on the perspective-corrected view and inverse-map results back to original image coordinates.
 - Hides default 22-point guide connections by default, with toggles for default lines, manual lines, Shenton curves, measurement lines, and point numbers.
 - Adds Shenton curve annotation for left/right obturator upper curve and femoral-neck inner-lower curve, with at least 3 points per segment and no hard upper limit.
-- Adds Shenton measurement snapshot: endpoint gap, forward-extension gap, optional mm distances, tangent angle, candidate continuity, and warnings.
+- Adds Shenton measurement snapshot: endpoint gap, optional mm distances, and warnings.
 - Adds live research-aid measurements from the current 22 points: AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, and acetabular depth. Acetabular depth is shown in millimeters when valid DICOM PixelSpacing is available.
 - Adds `scripts/export_shenton_training_set.py` for internal JSONL and YOLO pose training export.
 - Adds `scripts/prepare_scan_like_images.py` for internal local preparation of scan-like enhanced images from phone-shot folders.

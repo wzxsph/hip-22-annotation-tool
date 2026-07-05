@@ -20,11 +20,12 @@ def test_shenton_measurement_requires_three_points_per_curve():
     measurement = compute_measurements(annotation)["shenton"]["left"]
 
     assert measurement["status"] == "unavailable"
-    assert measurement["continuous_candidate"] is None
+    assert "continuous_candidate" not in measurement
+    assert "tangent_angle_deg" not in measurement
     assert measurement["warnings"]
 
 
-def test_shenton_measurement_outputs_gap_angle_and_candidate():
+def test_shenton_measurement_outputs_endpoint_gap():
     annotation = create_blank_annotation("case.png", 100, 100)
     _set_curve(annotation, "left", "obturator_upper_curve", [(10, 20), (20, 20), (30, 20)])
     _set_curve(annotation, "left", "femoral_neck_inner_lower_curve", [(36, 20), (46, 20), (56, 20)])
@@ -34,9 +35,8 @@ def test_shenton_measurement_outputs_gap_angle_and_candidate():
     assert measurement["status"] == "computed"
     assert measurement["gap_px"] == 6.0
     assert measurement["endpoint_gap_px"] == 6.0
-    assert measurement["extension_gap_px"] == 0.0
-    assert measurement["tangent_angle_deg"] == 0.0
-    assert measurement["continuous_candidate"] is True
+    assert "tangent_angle_deg" not in measurement
+    assert "continuous_candidate" not in measurement
     assert measurement["gap_mm"] is None
 
 
@@ -51,7 +51,6 @@ def test_shenton_measurement_uses_pixel_spacing_when_available():
 
     assert measurement["gap_px"] == 6.0
     assert measurement["gap_mm"] == 1.8
-    assert measurement["extension_gap_mm"] == 0.0
 
 
 def test_shenton_measurement_accepts_many_curve_points():
@@ -65,10 +64,10 @@ def test_shenton_measurement_accepts_many_curve_points():
 
     assert measurement["status"] == "computed"
     assert measurement["gap_px"] is not None
-    assert measurement["tangent_angle_deg"] is not None
+    assert "tangent_angle_deg" not in measurement
 
 
-def test_shenton_extension_can_bridge_endpoint_gap_when_curves_are_smooth():
+def test_shenton_measurement_does_not_bridge_endpoint_gap_by_extension():
     annotation = create_blank_annotation("case.png", 220, 140)
     _set_curve(annotation, "left", "obturator_upper_curve", [(10, 40), (20, 35), (30, 30)])
     _set_curve(annotation, "left", "femoral_neck_inner_lower_curve", [(50, 20), (60, 15), (70, 10)])
@@ -76,16 +75,13 @@ def test_shenton_extension_can_bridge_endpoint_gap_when_curves_are_smooth():
     measurement = compute_measurements(annotation)["shenton"]["left"]
 
     assert measurement["gap_px"] > 8
-    assert measurement["extension_gap_px"] == pytest.approx(0.0, abs=0.01)
-    assert measurement["extension_projection"] in {
-        "forward_intersection",
-        "obturator_endpoint_to_femoral_ray",
-        "femoral_endpoint_to_obturator_ray",
-    }
-    assert measurement["continuous_candidate"] is True
+    assert "extension_gap_px" not in measurement
+    assert "extension_projection" not in measurement
+    assert "extension_points_px" not in measurement
+    assert "continuous_candidate" not in measurement
 
 
-def test_shenton_extension_ignores_legacy_manual_intersection():
+def test_shenton_measurement_ignores_legacy_manual_intersection():
     annotation = create_blank_annotation("case.png", 220, 140)
     _set_curve(annotation, "left", "obturator_upper_curve", [(10, 40), (20, 35), (30, 30)])
     _set_curve(annotation, "left", "femoral_neck_inner_lower_curve", [(50, 20), (60, 15), (70, 10)])
@@ -100,23 +96,23 @@ def test_shenton_extension_ignores_legacy_manual_intersection():
 
     measurement = compute_measurements(annotation)["shenton"]["left"]
 
-    assert measurement["extension_projection"] != "manual_intersection"
-    assert measurement["extension_source"] == "auto"
-    assert measurement["extension_gap_px"] == 0.0
-    assert measurement["extension_points_px"]["intersection"] is None
+    assert "extension_projection" not in measurement
+    assert "extension_source" not in measurement
+    assert "extension_gap_px" not in measurement
+    assert "extension_points_px" not in measurement
     assert not any("人工调整" in warning for warning in measurement["warnings"])
 
 
-def test_shenton_extension_rejects_large_tangent_angle():
+def test_shenton_measurement_does_not_compute_tangent_angle():
     annotation = create_blank_annotation("case.png", 220, 140)
     _set_curve(annotation, "left", "obturator_upper_curve", [(10, 20), (20, 20), (30, 20)])
     _set_curve(annotation, "left", "femoral_neck_inner_lower_curve", [(30, 55), (30, 45), (30, 35)])
 
     measurement = compute_measurements(annotation)["shenton"]["left"]
 
-    assert measurement["extension_gap_px"] == pytest.approx(0.0, abs=0.01)
-    assert measurement["tangent_angle_deg"] == pytest.approx(90.0, abs=0.01)
-    assert measurement["continuous_candidate"] is False
+    assert measurement["gap_px"] == pytest.approx(15.0, abs=0.01)
+    assert "tangent_angle_deg" not in measurement
+    assert "continuous_candidate" not in measurement
 
 
 def test_clinical_parameters_compute_ai_and_sharp_angles():

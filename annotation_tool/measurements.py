@@ -7,10 +7,6 @@ from .schema import Annotation
 
 
 SHENTON_GAP_THRESHOLD_PX = 8.0
-SHENTON_TANGENT_THRESHOLD_DEG = 15.0
-SHENTON_MAX_EXTENSION_FRACTION = 0.12
-SHENTON_MIN_EXTENSION_THRESHOLD_PX = 32.0
-SHENTON_MAX_EXTENSION_THRESHOLD_PX = 120.0
 
 
 def compute_measurements(annotation: Annotation) -> dict[str, Any]:
@@ -46,54 +42,26 @@ def compute_shenton_side(annotation: Annotation, side: str) -> dict[str, Any]:
         return {
             "status": "unavailable",
             "available": False,
-            "continuous_candidate": None,
             "gap_px": None,
             "gap_mm": None,
-            "tangent_angle_deg": None,
             "warnings": warnings,
         }
 
     end_a, idx_a, end_b, idx_b = _closest_endpoints(obturator, femoral)
-    tangent_a = _endpoint_tangent(obturator, idx_a, target=end_b)
-    tangent_b = _endpoint_tangent(femoral, idx_b, target=end_a)
     endpoint_gap_px = _distance(end_a, end_b)
-    tangent_angle = _undirected_angle(tangent_a, tangent_b)
     endpoint_gap_mm = _physical_distance(annotation, end_a, end_b)
-    extension = _shenton_extension_geometry(annotation, end_a, tangent_a, end_b, tangent_b)
-    max_extension_threshold = _max_shenton_extension_distance(annotation)
-    continuous = (
-        extension["gap_px"] <= SHENTON_GAP_THRESHOLD_PX
-        and tangent_angle <= SHENTON_TANGENT_THRESHOLD_DEG
-        and extension["max_extension_distance_px"] <= max_extension_threshold
-    )
     result_warnings = ["临床连续性阈值待学校团队确认。"]
     if endpoint_gap_mm is None:
         result_warnings.append("缺少有效 DICOM PixelSpacing，当前仅输出像素距离。")
     return {
         "status": "computed",
         "available": True,
-        "continuous_candidate": continuous,
         "gap_px": round(endpoint_gap_px, 2),
         "gap_mm": round(endpoint_gap_mm, 3) if endpoint_gap_mm is not None else None,
         "endpoint_gap_px": round(endpoint_gap_px, 2),
         "endpoint_gap_mm": round(endpoint_gap_mm, 3) if endpoint_gap_mm is not None else None,
-        "extension_gap_px": round(extension["gap_px"], 2),
-        "extension_gap_mm": round(extension["gap_mm"], 3) if extension["gap_mm"] is not None else None,
-        "extension_points_px": extension["points_px"],
-        "extension_distance_px": {
-            "obturator_upper_curve": round(extension["distance_a_px"], 2),
-            "femoral_neck_inner_lower_curve": round(extension["distance_b_px"], 2),
-            "max": round(extension["max_extension_distance_px"], 2),
-            "threshold": round(max_extension_threshold, 2),
-        },
-        "extension_projection": extension["projection"],
-        "extension_source": extension.get("source", "auto"),
-        "tangent_angle_deg": round(tangent_angle, 2),
         "thresholds": {
             "gap_px": SHENTON_GAP_THRESHOLD_PX,
-            "extension_gap_px": SHENTON_GAP_THRESHOLD_PX,
-            "tangent_angle_deg": SHENTON_TANGENT_THRESHOLD_DEG,
-            "max_extension_distance_px": round(max_extension_threshold, 2),
             "clinical_threshold_status": "pending",
         },
         "warnings": result_warnings,
@@ -181,151 +149,8 @@ def _closest_endpoints(
     return first[idx_a], idx_a, second[idx_b], idx_b
 
 
-def _endpoint_tangent(
-    points: list[dict[str, float]],
-    endpoint_index: int,
-    *,
-    target: dict[str, float] | None = None,
-) -> tuple[float, float]:
-    endpoint = points[endpoint_index]
-    window_size = min(4, len(points))
-    if endpoint_index == 0:
-        local = points[:window_size]
-        vec = (local[0]["x"] - local[-1]["x"], local[0]["y"] - local[-1]["y"])
-    else:
-        local = points[-window_size:]
-        vec = (local[-1]["x"] - local[0]["x"], local[-1]["y"] - local[0]["y"])
-    if math.hypot(*vec) == 0:
-        neighbor = points[1] if endpoint_index == 0 else points[-2]
-        vec = (endpoint["x"] - neighbor["x"], endpoint["y"] - neighbor["y"])
-    if target is not None:
-        toward_target = (target["x"] - endpoint["x"], target["y"] - endpoint["y"])
-        if _dot(vec, toward_target) < 0:
-            vec = (-vec[0], -vec[1])
-    return vec
-
-
-def _shenton_extension_geometry(
-    annotation: Annotation,
-    first: dict[str, float],
-    first_tangent: tuple[float, float],
-    second: dict[str, float],
-    second_tangent: tuple[float, float],
-) -> dict[str, Any]:
-    first_dir = _unit(first_tangent)
-    second_dir = _unit(second_tangent)
-    if first_dir is None or second_dir is None:
-        gap_px = _distance(first, second)
-        return {
-            "gap_px": gap_px,
-            "gap_mm": _physical_distance(annotation, first, second),
-            "distance_a_px": 0.0,
-            "distance_b_px": 0.0,
-            "max_extension_distance_px": 0.0,
-            "projection": "endpoint_fallback",
-            "points_px": {
-                "obturator_upper_curve": _round_point(first),
-                "femoral_neck_inner_lower_curve": _round_point(second),
-                "intersection": None,
-            },
-        }
-
-    closest = _closest_points_on_forward_rays(first, first_dir, second, second_dir)
-    point_a = closest["point_a"]
-    point_b = closest["point_b"]
-    gap_px = _distance(point_a, point_b)
-    return {
-        "gap_px": gap_px,
-        "gap_mm": _physical_distance(annotation, point_a, point_b),
-        "distance_a_px": closest["distance_a_px"],
-        "distance_b_px": closest["distance_b_px"],
-        "max_extension_distance_px": max(closest["distance_a_px"], closest["distance_b_px"]),
-        "projection": closest["projection"],
-        "points_px": {
-            "obturator_upper_curve": _round_point(point_a),
-            "femoral_neck_inner_lower_curve": _round_point(point_b),
-            "intersection": None,
-        },
-    }
-
-
-def _closest_points_on_forward_rays(
-    first: dict[str, float],
-    first_dir: tuple[float, float],
-    second: dict[str, float],
-    second_dir: tuple[float, float],
-) -> dict[str, Any]:
-    intersection = _ray_intersection(first, first_dir, second, second_dir)
-    if intersection is not None:
-        point, distance_a, distance_b = intersection
-        return {
-            "point_a": point,
-            "point_b": point,
-            "distance_a_px": distance_a,
-            "distance_b_px": distance_b,
-            "projection": "forward_intersection",
-        }
-
-    candidates: list[dict[str, Any]] = []
-    projection, distance = _project_point_to_ray(first, second, second_dir)
-    candidates.append(
-        {
-            "point_a": first,
-            "point_b": projection,
-            "distance_a_px": 0.0,
-            "distance_b_px": distance,
-            "projection": "obturator_endpoint_to_femoral_ray",
-        }
-    )
-    projection, distance = _project_point_to_ray(second, first, first_dir)
-    candidates.append(
-        {
-            "point_a": projection,
-            "point_b": second,
-            "distance_a_px": distance,
-            "distance_b_px": 0.0,
-            "projection": "femoral_endpoint_to_obturator_ray",
-        }
-    )
-    candidates.append(
-        {
-            "point_a": first,
-            "point_b": second,
-            "distance_a_px": 0.0,
-            "distance_b_px": 0.0,
-            "projection": "endpoint_gap",
-        }
-    )
-    return min(candidates, key=lambda item: _distance(item["point_a"], item["point_b"]))
-
-
-def _ray_intersection(
-    first: dict[str, float],
-    first_dir: tuple[float, float],
-    second: dict[str, float],
-    second_dir: tuple[float, float],
-) -> tuple[dict[str, float], float, float] | None:
-    denom = _cross(first_dir, second_dir)
-    if abs(denom) < 1e-9:
-        return None
-    delta = (second["x"] - first["x"], second["y"] - first["y"])
-    distance_a = _cross(delta, second_dir) / denom
-    distance_b = _cross(delta, first_dir) / denom
-    if distance_a < -1e-6 or distance_b < -1e-6:
-        return None
-    point = {"x": first["x"] + first_dir[0] * distance_a, "y": first["y"] + first_dir[1] * distance_a}
-    return point, max(0.0, distance_a), max(0.0, distance_b)
-
-
-def _project_point_to_ray(
-    point: dict[str, float],
-    origin: dict[str, float],
-    direction: tuple[float, float],
-) -> tuple[dict[str, float], float]:
-    delta = (point["x"] - origin["x"], point["y"] - origin["y"])
-    distance = max(0.0, _dot(delta, direction))
-    projected = {"x": origin["x"] + direction[0] * distance, "y": origin["y"] + direction[1] * distance}
-    return projected, distance
+def _distance(first: dict[str, float], second: dict[str, float]) -> float:
+    return math.hypot(second["x"] - first["x"], second["y"] - first["y"])
 
 
 def _undirected_angle(first: tuple[float, float], second: tuple[float, float]) -> float:
@@ -341,36 +166,6 @@ def _angle_between(first: tuple[float, float], second: tuple[float, float]) -> f
         return 180.0
     cosine = max(-1.0, min(1.0, (ax * bx + ay * by) / norm))
     return math.degrees(math.acos(cosine))
-
-
-def _distance(first: dict[str, float], second: dict[str, float]) -> float:
-    return math.hypot(second["x"] - first["x"], second["y"] - first["y"])
-
-
-def _dot(first: tuple[float, float], second: tuple[float, float]) -> float:
-    return first[0] * second[0] + first[1] * second[1]
-
-
-def _cross(first: tuple[float, float], second: tuple[float, float]) -> float:
-    return first[0] * second[1] - first[1] * second[0]
-
-
-def _unit(vector: tuple[float, float]) -> tuple[float, float] | None:
-    norm = math.hypot(vector[0], vector[1])
-    if norm <= 1e-9:
-        return None
-    return vector[0] / norm, vector[1] / norm
-
-
-def _round_point(point: dict[str, float]) -> dict[str, float]:
-    return {"x": round(float(point["x"]), 2), "y": round(float(point["y"]), 2)}
-
-
-def _max_shenton_extension_distance(annotation: Annotation) -> float:
-    width = max(1.0, float(getattr(annotation.image, "width", 1) or 1))
-    height = max(1.0, float(getattr(annotation.image, "height", 1) or 1))
-    dynamic = math.hypot(width, height) * SHENTON_MAX_EXTENSION_FRACTION
-    return max(SHENTON_MIN_EXTENSION_THRESHOLD_PX, min(SHENTON_MAX_EXTENSION_THRESHOLD_PX, dynamic))
 
 
 def _physical_distance(annotation: Annotation, first: dict[str, float], second: dict[str, float]) -> float | None:

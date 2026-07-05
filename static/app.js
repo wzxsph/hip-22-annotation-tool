@@ -1214,22 +1214,9 @@ const App = {
     const sideText = (side) => {
       const item = shenton[side] || {};
       if (item.status === "unavailable") return `${side === "left" ? "左" : "右"}：曲线不足`;
-      const extensionGap =
-        typeof item.extension_gap_px === "number"
-          ? `${item.extension_gap_px.toFixed(1)}px`
-          : typeof item.gap_px === "number"
-            ? `${item.gap_px.toFixed(1)}px`
-            : "-";
-      const extensionGapMm =
-        typeof item.extension_gap_mm === "number"
-          ? ` / ${item.extension_gap_mm.toFixed(2)}mm`
-          : typeof item.gap_mm === "number"
-            ? ` / ${item.gap_mm.toFixed(2)}mm`
-            : "";
-      const endpointGap = typeof item.endpoint_gap_px === "number" ? `，端点 ${item.endpoint_gap_px.toFixed(1)}px` : "";
-      const angle = typeof item.tangent_angle_deg === "number" ? `${item.tangent_angle_deg.toFixed(1)}°` : "-";
-      const candidate = item.continuous_candidate === true ? "候选连续" : item.continuous_candidate === false ? "需复核" : "待计算";
-      return `${side === "left" ? "左" : "右"}：${candidate}，延长 gap ${extensionGap}${extensionGapMm}${endpointGap}，角度 ${angle}`;
+      const gap = typeof item.gap_px === "number" ? `${item.gap_px.toFixed(1)}px` : "-";
+      const gapMm = typeof item.gap_mm === "number" ? ` / ${item.gap_mm.toFixed(2)}mm` : "";
+      return `${side === "left" ? "左" : "右"}：端点 gap ${gap}${gapMm}`;
     };
     summary.textContent = `Shenton：${sideText("left")}；${sideText("right")}`;
     const clinicalParameters = snapshot.clinical_parameters || {};
@@ -2365,34 +2352,6 @@ const App = {
     ["left", "right"].forEach((side) => {
       const pair = App.closestShentonEndpoints(side);
       if (!pair) return;
-      const extension = App.currentShentonExtension(side);
-      if (extension) {
-        ctx.lineWidth = 1.6 * inv;
-        ctx.setLineDash([6 * inv, 4 * inv]);
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-        ctx.beginPath();
-        ctx.moveTo(pair.a.x, pair.a.y);
-        ctx.lineTo(extension.a.x, extension.a.y);
-        ctx.moveTo(pair.b.x, pair.b.y);
-        ctx.lineTo(extension.b.x, extension.b.y);
-        ctx.stroke();
-        ctx.setLineDash([3 * inv, 5 * inv]);
-        ctx.beginPath();
-        ctx.moveTo(extension.a.x, extension.a.y);
-        ctx.lineTo(extension.b.x, extension.b.y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        [extension.a, extension.b].forEach((point) => {
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, 4.2 * inv, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
-          ctx.fill();
-          ctx.strokeStyle = "rgba(0, 0, 0, 0.65)";
-          ctx.lineWidth = 1.2 * inv;
-          ctx.stroke();
-        });
-        return;
-      }
       ctx.beginPath();
       ctx.moveTo(pair.a.x, pair.a.y);
       ctx.lineTo(pair.b.x, pair.b.y);
@@ -2402,20 +2361,6 @@ const App = {
       ctx.stroke();
       ctx.setLineDash([]);
     });
-  },
-
-  currentShentonExtension: (side) => {
-    const item = App.state.annotation?.measurements_snapshot?.shenton?.[side];
-    const points = item?.extension_points_px;
-    const a = points?.obturator_upper_curve;
-    const b = points?.femoral_neck_inner_lower_curve;
-    if (!a || !b || typeof a.x !== "number" || typeof a.y !== "number" || typeof b.x !== "number" || typeof b.y !== "number") {
-      return null;
-    }
-    return {
-      a,
-      b,
-    };
   },
 
   closestShentonEndpoints: (side) => {

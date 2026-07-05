@@ -129,7 +129,7 @@ Version 0.2.0 adds prerelease research support for DICOM and Shenton curve colle
 - If model output is unavailable or incomplete, missing points are filled with `template_guess` points from a normalized demo-derived template. These are starting positions only and require review.
 - Default 22-point guide connections are hidden by default to reduce occlusion. Manual connections, Shenton curves, measurement lines, and point labels each have separate display toggles.
 - The Shenton tool lets a reviewer mark left/right obturator upper curve and femoral-neck inner-lower curve with at least 3 points per segment; more points are allowed for curve fitting. The reviewer records `continuous`, `discontinuous`, or `uncertain`. The tool no longer asks reviewers to mark an extension intersection; legacy intersection fields are read for compatibility only and are ignored by training export. Measurements are research aids only, not clinical conclusions.
-- `/api/annotation/measurements/compute` returns Shenton `gap_px`, optional `gap_mm`, tangent angle, AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, acetabular depth, and warnings. Acetabular depth is shown in mm when DICOM PixelSpacing is available.
+- `/api/annotation/measurements/compute` returns Shenton endpoint `gap_px`, optional `gap_mm`, AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, acetabular depth, and warnings. Acetabular depth is shown in mm when DICOM PixelSpacing is available.
 
 Internal research export:
 
