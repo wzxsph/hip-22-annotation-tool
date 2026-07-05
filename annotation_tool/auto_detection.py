@@ -9,9 +9,11 @@ from .image_processing import enhance_xray_image
 from .scan_like import map_result_from_scan, warp_for_scan_transform
 
 
-def preprocess_label(*, use_enhanced: bool, use_scan: bool = False) -> str:
+def preprocess_label(*, use_enhanced: bool, use_scan: bool = False, use_roi: bool = False) -> str:
     parts: list[str] = []
-    if use_scan:
+    if use_roi:
+        parts.append("roi_crop")
+    elif use_scan:
         parts.append("scan_like")
     parts.append("hip_demo_enhanced" if use_enhanced else "original")
     return "+".join(parts)
@@ -87,17 +89,17 @@ def estimate_keypoints_with_preprocessing(
     kwargs: dict[str, Any] = {"include_partial": include_partial}
     if min_visible_keypoints is not None:
         kwargs["min_visible_keypoints"] = min_visible_keypoints
-    scan_warp = warp_for_scan_transform(image, scan_transform) if use_scan else None
+    detection_image, roi_used = crop_for_roi(image, roi_crop)
+    scan_warp = None
+    scan_used = None
+    if roi_used is None:
+        scan_warp = warp_for_scan_transform(image, scan_transform) if use_scan else None
     if scan_warp is not None:
         detection_image = scan_warp.image
-        roi_used = None
         scan_used = scan_warp.used
-    else:
-        detection_image, roi_used = crop_for_roi(image, roi_crop)
-        scan_used = None
     result = estimate_keypoints_from_image(image_for_auto_detection(detection_image, use_enhanced=use_enhanced), **kwargs)
     if scan_warp is not None:
         result = map_result_from_scan(result, scan_warp.inverse_matrix)
     else:
         result = map_result_from_roi(result, roi_used)
-    return result, preprocess_label(use_enhanced=use_enhanced, use_scan=scan_used is not None), roi_used, scan_used
+    return result, preprocess_label(use_enhanced=use_enhanced, use_scan=scan_used is not None, use_roi=roi_used is not None), roi_used, scan_used

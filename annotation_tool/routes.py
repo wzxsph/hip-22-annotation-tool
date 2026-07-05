@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import filecmp
 import io
+import shutil
 import time
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -14,11 +17,12 @@ from pydantic import BaseModel
 
 from .auto_detect_queue import auto_detect_status, replace_auto_detect_queue
 from .auto_detection import estimate_keypoints_with_preprocessing
+from .completion import PROGRESS_STATUS_VERSION, annotation_progress
 from .dicom_utils import is_dicom_path
 from .image_io import is_supported_image_path, read_supported_image
 from .measurements import compute_measurements
-from .progress_report import build_progress_payload
-from .render_cache import cached_rendered_png
+from .progress_report import build_progress_payload_from_manifest
+from .render_cache import cached_rendered_png, cached_thumbnail_jpeg
 from .schema import LANDMARK_DEFS, Annotation, Manifest, create_blank_annotation, ensure_keypoint_template, model_to_dict, normalize_split
 from .storage import (
     annotation_path,
@@ -26,12 +30,15 @@ from .storage import (
     current_root,
     data_yaml_path,
     ensure_dataset_layout,
+    find_annotation_path,
     find_image_path,
     image_path_for,
     load_annotation,
+    load_annotation_from_path,
     load_annotation_from_yolo_label,
     load_manifest,
     load_settings,
+    manifest_image_for_path,
     save_annotation,
     save_manifest,
     save_settings,
@@ -67,6 +74,14 @@ class AutoDetectImageRequest(BaseModel):
     use_enhanced: bool = False
     use_roi: bool = True
     use_scan: bool = True
+
+
+@dataclass(frozen=True)
+class LegacyAnnotationRecord:
+    path: Path
+    annotation: Annotation
+    image_filename: str
+    split: str
 
 
 def _is_image_file(path: Path) -> bool:
@@ -131,15 +146,217 @@ def _scan_workspace_images(root: Path) -> list[Path]:
     return images
 
 
-def _readable_image_files(paths: list[Path]) -> list[Path]:
-    readable: list[Path] = []
+def _readability_check(paths: list[Path], *, full_check_limit: int = 100) -> tuple[list[Path], bool]:
+    if len(paths) > full_check_limit:
+        return [], False
+    unreadable: list[Path] = []
     for path in paths:
         try:
             read_supported_image(path)
         except Exception:
+            unreadable.append(path)
+    return unreadable, True
+
+
+def _annotation_json_candidates(root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    for directory in (root / "annotations", root):
+        if not directory.exists() or not directory.is_dir():
             continue
-        readable.append(path)
-    return readable
+        for path in sorted(directory.glob("*.json")):
+            if path.name in {"manifest.json", "tool-settings.json"}:
+                continue
+            candidates.append(path)
+    return candidates
+
+
+def _scan_legacy_annotation_records(root: Path) -> list[LegacyAnnotationRecord]:
+    records_by_filename: dict[str, LegacyAnnotationRecord] = {}
+    for path in _annotation_json_candidates(root):
+        try:
+            annotation = ensure_keypoint_template(load_annotation_from_path(path))
+        except Exception:
+            continue
+        image_filename = Path(annotation.image.filename).name
+        if not image_filename:
+            continue
+        annotation.image.filename = image_filename
+        split = normalize_split(getattr(annotation.image, "split", "train"))
+        annotation.image.split = split
+        key = image_filename.lower()
+        if key in records_by_filename:
+            continue
+        records_by_filename[key] = LegacyAnnotationRecord(
+            path=path,
+            annotation=annotation,
+            image_filename=image_filename,
+            split=split,
+        )
+    return list(records_by_filename.values())
+
+
+def _candidate_image_dirs_for_legacy(root: Path) -> list[Path]:
+    seen: set[Path] = set()
+    directories: list[Path] = []
+
+    def add(path: Path) -> None:
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError:
+            return
+        if resolved in seen or not resolved.exists() or not resolved.is_dir():
+            return
+        seen.add(resolved)
+        directories.append(resolved)
+
+    for base in (root, root / "images", root / "images" / "train", root / "images" / "val"):
+        add(base)
+
+    parent = root.parent
+    if parent.exists() and parent.is_dir():
+        for sibling in sorted(parent.iterdir()):
+            if not sibling.is_dir() or sibling.resolve() == root.resolve():
+                continue
+            for base in (sibling, sibling / "images", sibling / "images" / "train", sibling / "images" / "val"):
+                add(base)
+
+    project_root = root.parent.parent
+    for base in (
+        project_root / "annotation-tool" / "images",
+        project_root / "annotation-tool" / "images" / "train",
+        project_root / "annotation-tool" / "images" / "val",
+    ):
+        add(base)
+    return directories
+
+
+def _index_images_by_name(directories: list[Path]) -> tuple[dict[str, list[Path]], dict[str, list[Path]]]:
+    by_name: dict[str, list[Path]] = {}
+    by_stem: dict[str, list[Path]] = {}
+    for directory in directories:
+        for path in sorted(directory.iterdir()):
+            if not path.is_file() or not _is_image_file(path):
+                continue
+            by_name.setdefault(path.name.lower(), []).append(path)
+            by_stem.setdefault(path.stem.lower(), []).append(path)
+    return by_name, by_stem
+
+
+def _match_legacy_image(record: LegacyAnnotationRecord, by_name: dict[str, list[Path]], by_stem: dict[str, list[Path]]) -> Path | None:
+    filename = Path(record.image_filename).name
+    exact = by_name.get(filename.lower())
+    if exact:
+        return exact[0]
+    stem = Path(filename).stem.lower()
+    stem_matches = by_stem.get(stem)
+    if stem_matches:
+        return stem_matches[0]
+    return None
+
+
+def _refresh_stale_manifest_progress(root: Path, manifest: Manifest) -> Manifest:
+    changed = False
+    for item in manifest.images:
+        filename = Path(item.image_path).name
+        image_path = find_image_path(filename, root) or (root / item.image_path)
+        annotation_file = find_annotation_path(filename, root, image_path)
+        if annotation_file is None or not annotation_file.exists():
+            continue
+        annotation_mtime_ns = annotation_file.stat().st_mtime_ns
+        if (
+            item.status_detail
+            and item.annotation_mtime_ns == annotation_mtime_ns
+            and item.progress_status_version == PROGRESS_STATUS_VERSION
+        ):
+            continue
+        try:
+            annotation = load_annotation_from_path(annotation_file)
+        except Exception:
+            continue
+        split = _split_from_image_path(image_path) if image_path.exists() else normalize_split(annotation.image.split)
+        refreshed = manifest_image_for_path(image_path, annotation=annotation, root=root, split=split)
+        item.status = refreshed.status
+        item.keypoint_status = refreshed.keypoint_status
+        item.shenton_status = refreshed.shenton_status
+        item.status_detail = refreshed.status_detail
+        item.keypoint_visible_count = refreshed.keypoint_visible_count
+        item.keypoint_manual_count = refreshed.keypoint_manual_count
+        item.shenton_complete_sides = refreshed.shenton_complete_sides
+        item.shenton_started_sides = refreshed.shenton_started_sides
+        item.annotation_mtime_ns = refreshed.annotation_mtime_ns
+        item.progress_status_version = refreshed.progress_status_version
+        item.annotator = refreshed.annotator
+        item.completed_at = refreshed.completed_at
+        changed = True
+    if changed:
+        save_manifest(manifest, root)
+    return manifest
+
+
+def _copy_legacy_image(source: Path, root: Path, split: str) -> tuple[Path | None, bool, str | None]:
+    source_resolved = source.resolve()
+    try:
+        source_resolved.relative_to(root.resolve())
+        return source_resolved, False, None
+    except ValueError:
+        pass
+
+    target_dir = root / "images" / normalize_split(split)
+    target = target_dir / source.name
+    if target.exists():
+        try:
+            if target.resolve() == source_resolved or filecmp.cmp(source_resolved, target, shallow=False):
+                return target.resolve(), False, None
+        except OSError:
+            pass
+        return None, False, f"{source.name} 已存在但内容不同，已跳过。"
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_resolved, target)
+    return target.resolve(), True, None
+
+
+def _materialize_legacy_only_workspace(root: Path, records: list[LegacyAnnotationRecord]) -> tuple[list[Path], dict]:
+    directories = _candidate_image_dirs_for_legacy(root)
+    by_name, by_stem = _index_images_by_name(directories)
+    image_paths: list[Path] = []
+    source_dirs: set[str] = set()
+    copied = 0
+    missing: list[str] = []
+    conflicts: list[str] = []
+
+    for record in records:
+        source = _match_legacy_image(record, by_name, by_stem)
+        if source is None:
+            missing.append(record.image_filename)
+            continue
+        image_path, was_copied, conflict = _copy_legacy_image(source, root, record.split)
+        if conflict:
+            conflicts.append(conflict)
+            continue
+        if image_path is None:
+            continue
+        if was_copied:
+            copied += 1
+        source_dirs.add(_relative_path_text(source.parent, root))
+        image_paths.append(image_path)
+
+    warnings: list[str] = []
+    if copied:
+        warnings.append(f"已从旧标注引用的图片目录复制 {copied} 张图片。")
+    if missing:
+        warnings.append(f"有 {len(missing)} 个旧标注找不到对应图片。")
+    if conflicts:
+        warnings.append(f"有 {len(conflicts)} 张图片目标文件名冲突，已跳过。")
+    return image_paths, {
+        "legacy_annotations": len(records),
+        "legacy_images_resolved": len(image_paths),
+        "copied_external_images": copied,
+        "missing_legacy_images": missing[:20],
+        "conflicting_legacy_images": conflicts[:20],
+        "external_image_dirs": sorted(source_dirs)[:20],
+        "warnings": warnings,
+    }
 
 
 def _relative_path_text(path: Path, root: Path) -> str:
@@ -169,11 +386,18 @@ def _limited_paths(paths: list[Path], root: Path, limit: int = 20) -> list[str]:
     return [_relative_path_text(path, root) for path in paths[:limit]]
 
 
-def _import_folder_report(root: Path, selected_images: list[Path]) -> dict:
+def _import_folder_report(
+    root: Path,
+    selected_images: list[Path],
+    *,
+    unreadable_files: list[Path] | None = None,
+    readability_checked_all: bool = True,
+    legacy_report: dict | None = None,
+) -> dict:
     selected = {path.resolve() for path in selected_images}
     supported_images: list[Path] = []
     unsupported_files: list[Path] = []
-    unreadable_files: list[Path] = []
+    unreadable_files = unreadable_files or []
     warnings: list[str] = []
     try:
         all_files = [path for path in root.rglob("*") if path.is_file()]
@@ -185,6 +409,12 @@ def _import_folder_report(root: Path, selected_images: list[Path]) -> dict:
             "unsupported_files": [],
             "unreadable_files": [],
             "messy_names": [],
+            "legacy_annotations": 0,
+            "legacy_images_resolved": 0,
+            "copied_external_images": 0,
+            "missing_legacy_images": [],
+            "conflicting_legacy_images": [],
+            "external_image_dirs": [],
         }
 
     for path in all_files:
@@ -195,12 +425,6 @@ def _import_folder_report(root: Path, selected_images: list[Path]) -> dict:
             continue
         if path.suffix.lower() not in {".txt", ".json", ".yaml", ".yml", ".csv", ".html"}:
             unsupported_files.append(path)
-
-    for path in selected_images:
-        try:
-            read_supported_image(path)
-        except Exception:
-            unreadable_files.append(path)
 
     nested_images = [path for path in supported_images if path.resolve() not in selected]
     by_name: dict[str, list[Path]] = {}
@@ -225,8 +449,12 @@ def _import_folder_report(root: Path, selected_images: list[Path]) -> dict:
         warnings.append(f"发现 {len(unsupported_files)} 个非图片/不支持文件。")
     if unreadable_files:
         warnings.append(f"发现 {len(unreadable_files)} 张图片无法读取，请联系项目团队。")
+    if not readability_checked_all:
+        warnings.append("图片较多，导入时已跳过逐张读图检查；损坏图片会在打开或后台识别时提示。")
     if messy_names:
         warnings.append(f"发现 {len(messy_names)} 个文件名可能需要整理。")
+    if legacy_report:
+        warnings.extend(legacy_report.get("warnings", []))
 
     return {
         "warnings": warnings,
@@ -235,6 +463,13 @@ def _import_folder_report(root: Path, selected_images: list[Path]) -> dict:
         "unsupported_files": _limited_paths(unsupported_files, root),
         "unreadable_files": _limited_paths(unreadable_files, root),
         "messy_names": messy_names,
+        "legacy_annotations": int((legacy_report or {}).get("legacy_annotations", 0) or 0),
+        "legacy_images_resolved": int((legacy_report or {}).get("legacy_images_resolved", 0) or 0),
+        "copied_external_images": int((legacy_report or {}).get("copied_external_images", 0) or 0),
+        "missing_legacy_images": list((legacy_report or {}).get("missing_legacy_images", [])),
+        "conflicting_legacy_images": list((legacy_report or {}).get("conflicting_legacy_images", [])),
+        "external_image_dirs": list((legacy_report or {}).get("external_image_dirs", [])),
+        "readability_checked_all": readability_checked_all,
     }
 
 
@@ -246,10 +481,14 @@ def _existing_annotation_for_image(
     persist_imported: bool = False,
     annotator: str | None = None,
 ) -> Annotation | None:
-    existing = load_annotation(image_path.name, root)
-    if existing is not None:
+    existing_path = find_annotation_path(image_path.name, root, image_path)
+    if existing_path is not None:
+        existing = ensure_keypoint_template(load_annotation_from_path(existing_path))
+        existing.image.filename = image_path.name
         existing.image.split = normalize_split(split)
-        return ensure_keypoint_template(existing)
+        if persist_imported and existing_path.resolve() != annotation_path(image_path.name, root).resolve():
+            save_annotation(existing, root, sync_yolo=False)
+        return existing
 
     imported = load_annotation_from_yolo_label(image_path, root, annotator=annotator or load_settings().get("annotator", "default"))
     if imported is None:
@@ -432,23 +671,42 @@ async def open_folder(request: OpenFolderRequest):
     if not folder.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {folder}")
 
-    settings = save_settings({"dataset_root": str(folder)})
-    root = Path(settings["dataset_root"])
-    ensure_dataset_layout(root)
-
+    root = folder
+    settings_before = load_settings()
+    split = normalize_split(request.split)
     image_files = _scan_workspace_images(root)
+    legacy_report: dict | None = None
     if not image_files:
-        raise HTTPException(status_code=400, detail="No supported image files found in the folder.")
-    import_report = _import_folder_report(root, image_files)
-    image_files = _readable_image_files(image_files)
+        legacy_records = _scan_legacy_annotation_records(root)
+        if not legacy_records:
+            raise HTTPException(status_code=400, detail="No supported image files found in the folder.")
+        image_files, legacy_report = _materialize_legacy_only_workspace(root, legacy_records)
+        if not image_files:
+            raise HTTPException(
+                status_code=400,
+                detail="找到旧标注 JSON，但未找到对应图片；请确认图片目录或把图片放入当前文件夹。",
+            )
+
+    selected_for_report = list(image_files)
+    unreadable_files, readability_checked_all = _readability_check(image_files)
+    if readability_checked_all and unreadable_files:
+        unreadable = {path.resolve() for path in unreadable_files}
+        image_files = [path for path in image_files if path.resolve() not in unreadable]
     if not image_files:
         raise HTTPException(status_code=400, detail="No readable supported image files found in the folder.")
+    import_report = _import_folder_report(
+        root,
+        selected_for_report,
+        unreadable_files=unreadable_files,
+        readability_checked_all=readability_checked_all,
+        legacy_report=legacy_report,
+    )
 
-    split = normalize_split(request.split)
-    save_manifest(Manifest(), root)
+    settings = save_settings({"dataset_root": str(root)})
     queued: list[Path] = []
     imported_or_saved = 0
-    annotator = settings.get("annotator", "default")
+    annotator = settings_before.get("annotator", "default")
+    manifest_by_id = {}
     for image_path in image_files:
         image_split = _split_from_image_path(image_path) if image_path.parent.name in {"train", "val"} else split
         annotation = _existing_annotation_for_image(
@@ -459,19 +717,21 @@ async def open_folder(request: OpenFolderRequest):
             annotator=annotator,
         )
         if annotation is None:
-            upsert_manifest_image(image_path, annotation=None, root=root, split=image_split)
+            manifest_item = manifest_image_for_path(image_path, annotation=None, root=root, split=image_split)
             if settings.get("auto_detect", True):
                 queued.append(image_path)
         else:
             imported_or_saved += 1
-            upsert_manifest_image(image_path, annotation=annotation, root=root, split=image_split)
+            manifest_item = manifest_image_for_path(image_path, annotation=annotation, root=root, split=image_split)
+        manifest_by_id[manifest_item.id] = manifest_item
+    manifest = Manifest(images=list(manifest_by_id.values()))
+    save_manifest(manifest, root)
     queue_status = replace_auto_detect_queue(
         root,
         queued if settings.get("auto_detect", True) else [],
         split=split,
         annotator=annotator,
     )
-    manifest = load_manifest(root)
     return {
         "status": "success",
         "added": len(image_files),
@@ -489,10 +749,11 @@ async def list_annotations():
     root = current_root()
     ensure_dataset_layout(root)
     manifest = load_manifest(root)
+    manifest = _refresh_stale_manifest_progress(root, manifest)
     payload = model_to_dict(manifest)
     payload["settings"] = load_settings()
     payload["auto_detect"] = auto_detect_status(root)
-    payload["progress"] = build_progress_payload(root, manifest)
+    payload["progress"] = build_progress_payload_from_manifest(manifest)
     return payload
 
 
@@ -513,29 +774,35 @@ async def load_annotation_by_name(filename: str):
         annotation.image.width = image.width
         annotation.image.height = image.height
         _apply_image_metadata(annotation, metadata)
-        upsert_manifest_image(image_path, annotation=annotation, root=root, split=split)
     payload = model_to_dict(annotation)
     payload["image_url"] = _image_url_for_path(image_path)
     return payload
 
 
 @router.post("/save")
-async def save_annotation_data(annotation: Annotation):
+async def save_annotation_data(annotation: Annotation, skip_manifest: bool = False):
     annotation = ensure_keypoint_template(annotation)
     annotation.measurements_snapshot = compute_measurements(annotation)
+    progress = annotation_progress(annotation)
     root = current_root()
     ensure_dataset_layout(root)
     save_annotation(annotation, root)
     image_path = find_image_path(annotation.image.filename, root)
-    if image_path is not None and image_path.exists():
+    if not skip_manifest and image_path is not None and image_path.exists():
         upsert_manifest_image(image_path, annotation=annotation, root=root, split=annotation.image.split)
     saved_label = label_path(annotation.image.filename, root, annotation.image.split)
-    return {
+    payload = {
         "status": "success",
         "annotation_path": str(annotation_path(annotation.image.filename, root).relative_to(root)),
         "label_path": str(saved_label.relative_to(root)) if saved_label.is_relative_to(root) else str(saved_label),
         "measurements_snapshot": annotation.measurements_snapshot,
+        "annotation_status": str(progress["status"]),
+        "annotation_progress": progress,
+        "manifest_skipped": skip_manifest,
     }
+    if not skip_manifest:
+        payload["progress"] = build_progress_payload_from_manifest(load_manifest(root))
+    return payload
 
 
 @router.post("/auto-detect-image")
@@ -644,11 +911,13 @@ async def compute_annotation_measurements(annotation: Annotation):
 
 
 @router.get("/image/{image_filename:path}")
-async def serve_image(image_filename: str, enhanced: bool = False):
+async def serve_image(image_filename: str, enhanced: bool = False, thumb: bool = False):
     root = current_root()
     image_path = find_image_path(_safe_filename(image_filename), root)
     if image_path is None or not image_path.exists() or not image_path.is_file():
         raise HTTPException(status_code=404, detail="Image not found.")
+    if thumb:
+        return FileResponse(cached_thumbnail_jpeg(image_path), media_type="image/jpeg")
     if is_dicom_path(image_path) or enhanced:
         return FileResponse(cached_rendered_png(image_path, enhanced=enhanced), media_type="image/png")
     return FileResponse(image_path)

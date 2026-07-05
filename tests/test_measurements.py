@@ -85,6 +85,28 @@ def test_shenton_extension_can_bridge_endpoint_gap_when_curves_are_smooth():
     assert measurement["continuous_candidate"] is True
 
 
+def test_shenton_extension_ignores_legacy_manual_intersection():
+    annotation = create_blank_annotation("case.png", 220, 140)
+    _set_curve(annotation, "left", "obturator_upper_curve", [(10, 40), (20, 35), (30, 30)])
+    _set_curve(annotation, "left", "femoral_neck_inner_lower_curve", [(50, 20), (60, 15), (70, 10)])
+    annotation.shenton_adjustments["left"]["extension_intersection"] = {
+        "enabled": True,
+        "x": 42,
+        "y": 26,
+        "source": "manual",
+        "updated_at": "2026-07-05T00:00:00Z",
+        "annotator": "doctor-a",
+    }
+
+    measurement = compute_measurements(annotation)["shenton"]["left"]
+
+    assert measurement["extension_projection"] != "manual_intersection"
+    assert measurement["extension_source"] == "auto"
+    assert measurement["extension_gap_px"] == 0.0
+    assert measurement["extension_points_px"]["intersection"] is None
+    assert not any("人工调整" in warning for warning in measurement["warnings"])
+
+
 def test_shenton_extension_rejects_large_tangent_angle():
     annotation = create_blank_annotation("case.png", 220, 140)
     _set_curve(annotation, "left", "obturator_upper_curve", [(10, 20), (20, 20), (30, 20)])

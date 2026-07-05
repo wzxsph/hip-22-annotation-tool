@@ -63,6 +63,9 @@ const App = {
     statusFilter: "all",
     importReport: null,
     lastSave: null,
+    lastSavedSnapshot: "",
+    manifestByFilename: new Map(),
+    thumbByFilename: new Map(),
     autosaveTimer: null,
     measurementTimer: null,
     thumbObserver: null,
@@ -404,7 +407,10 @@ const App = {
       button.disabled = false;
       return;
     }
-    App.setStatus(useEnhanced ? "正在使用增强预览重试自动识别..." : "正在重新自动识别当前图片...");
+    const useRoi = Boolean(App.currentRoiCrop());
+    const useScan = !useRoi;
+    const requestedLabel = useRoi ? (useEnhanced ? "ROI内增强识别" : "ROI内原图识别") : useEnhanced ? "增强识别" : "原图识别";
+    App.setStatus(`正在${requestedLabel}...`);
     try {
       const res = await fetch("/api/annotation/auto-detect-image", {
         method: "POST",
@@ -414,12 +420,13 @@ const App = {
           preserve_manual: true,
           include_partial: true,
           use_enhanced: useEnhanced,
-          use_roi: true,
-          use_scan: true,
+          use_roi: useRoi,
+          use_scan: useScan,
         }),
       });
       const data = await App.readJsonResponse(res, "auto detect image failed");
       const info = data.auto_detect || {};
+      const resultLabel = App.autoDetectResultLabel(info, useEnhanced);
       App.applyAnnotation(data);
       App.state.lastSave = {
         filename: data.image.filename,
@@ -432,18 +439,24 @@ const App = {
       const template = info.template_fallback || {};
       if (info.applied && template.enabled) {
         App.setStatus(
-          `${useEnhanced ? "增强识别" : "自动识别"}完成：模型识别 ${info.visible_count || 0} 个点，模板补齐 ${template.filled_count || 0} 个点，请逐点复核`,
+          `${resultLabel}完成：模型识别 ${info.visible_count || 0} 个点，模板补齐 ${template.filled_count || 0} 个点，请逐点复核`,
         );
       } else if (info.applied && info.visible_count > 0) {
-        App.setStatus(`${useEnhanced ? "增强识别" : "自动识别"}完成：识别到 ${info.visible_count} 个点，已保留人工修改点`);
+        App.setStatus(`${resultLabel}完成：识别到 ${info.visible_count} 个点，已保留人工修改点`);
       } else {
-        App.setStatus("自动识别仍未找到可用点，请使用模板点拖拽复核或把图片发给项目团队排查");
+        App.setStatus(`${resultLabel}未找到可用点，请使用模板点拖拽复核或把图片发给项目团队排查`);
       }
     } catch (err) {
-      App.setStatus(`自动识别失败: ${err.message}`);
+      App.setStatus(`识别失败: ${err.message}`);
     } finally {
       button.disabled = false;
     }
+  },
+
+  autoDetectResultLabel: (info, useEnhanced = false) => {
+    if (info?.roi_crop_used) return useEnhanced ? "ROI内增强识别" : "ROI内原图识别";
+    if (info?.scan_transform_used) return "扫描校正识别";
+    return useEnhanced ? "全图增强识别" : "全图识别";
   },
 
   loadManifest: async () => {
@@ -452,6 +465,7 @@ const App = {
       if (!res.ok) throw new Error(await res.text());
       const data = await App.readJsonResponse(res, "manifest failed");
       App.state.manifestImages = data.images || [];
+      App.state.manifestByFilename = new Map(App.state.manifestImages.map((item) => [App.imageFilename(item), item]));
       App.state.progress = data.progress || null;
       App.state.autoDetectStatus = data.auto_detect || App.state.autoDetectStatus;
       if (data.settings) {
@@ -475,24 +489,39 @@ const App = {
   },
 
   progressCounts: () => {
-    const counts = { total: 0, pending: 0, auto: 0, in_progress: 0, done: 0, needs_review: 0 };
+    const counts = {
+      total: 0,
+      pending: 0,
+      auto: 0,
+      in_progress: 0,
+      keypoint_complete: 0,
+      shenton_complete: 0,
+      done: 0,
+      needs_review: 0,
+      keypoints_complete_total: 0,
+      shenton_complete_total: 0,
+    };
     (App.state.manifestImages || []).forEach((item) => {
-      const status = ["pending", "auto", "in_progress", "done"].includes(item.status) ? item.status : "pending";
+      const status = ["pending", "auto", "in_progress", "keypoint_complete", "shenton_complete", "done"].includes(item.status)
+        ? item.status
+        : "pending";
       counts[status] += 1;
       counts.total += 1;
+      if (item.keypoint_status === "complete") counts.keypoints_complete_total += 1;
+      if (item.shenton_status === "complete") counts.shenton_complete_total += 1;
     });
-    counts.needs_review = counts.pending + counts.auto + counts.in_progress;
+    counts.needs_review = counts.total - counts.done;
     return counts;
   },
 
   renderProgressSummary: () => {
-    const counts = App.state.progress?.counts || App.progressCounts();
+    const counts = { ...App.progressCounts(), ...(App.state.progress?.counts || {}) };
     const summary = document.getElementById("progressSummary");
     if (!summary) return;
     if (!counts.total) {
       summary.textContent = "未导入文件夹";
     } else {
-      summary.innerHTML = `<strong>${counts.done}</strong> / ${counts.total} 已完成；${counts.needs_review} 张仍需处理`;
+      summary.innerHTML = `<strong>${counts.done}</strong> / ${counts.total} 完成；${counts.needs_review} 张仍需处理<br><span>关键点完成 ${counts.keypoint_complete || 0}；Shenton完成 ${counts.shenton_complete || 0}；未完成 ${counts.in_progress || 0}</span>`;
     }
     const report = App.state.progress?.report_files;
     const reportText = document.getElementById("progressReportText");
@@ -521,11 +550,11 @@ const App = {
     }
     if (nextCounts.needs_review === 0) {
       target.classList.add("ready");
-      target.textContent = "提交检查通过：全部图片已完成。保存后将整个文件夹直接发送给项目团队。";
+      target.textContent = "提交检查通过：全部图片关键点和 Shenton 均已完成。保存后将整个文件夹直接发送给项目团队。";
       return;
     }
     target.classList.add("warning");
-    target.textContent = `提交前仍需处理 ${nextCounts.needs_review} 张：未标注 ${nextCounts.pending}，待复核 ${nextCounts.auto}，修改中 ${nextCounts.in_progress}。`;
+    target.textContent = `提交前仍需处理 ${nextCounts.needs_review} 张：未标注 ${nextCounts.pending}，待复核 ${nextCounts.auto}，未完成 ${nextCounts.in_progress}，关键点完成 ${nextCounts.keypoint_complete || 0}，Shenton完成 ${nextCounts.shenton_complete || 0}。`;
   },
 
   renderSaveInfo: () => {
@@ -546,16 +575,23 @@ const App = {
     const target = document.getElementById("importReportText");
     if (!target) return;
     const report = App.state.importReport;
-    if (!report?.warnings?.length) {
+    const parts = [];
+    if (report?.warnings?.length) parts.push(...report.warnings.slice(0, 3));
+    if (report?.legacy_annotations) parts.push(`旧标注 ${report.legacy_annotations} 个`);
+    if (report?.copied_external_images) parts.push(`已复制图片 ${report.copied_external_images} 张`);
+    if (report?.missing_legacy_images?.length) parts.push(`缺图 ${report.missing_legacy_images.length} 个`);
+    if (report?.conflicting_legacy_images?.length) parts.push(`冲突 ${report.conflicting_legacy_images.length} 个`);
+    if (!parts.length) {
       target.textContent = "命名混乱或目录嵌套时，可先发给项目团队整理";
       return;
     }
-    target.textContent = `导入提示：${report.warnings.slice(0, 3).join("；")}`;
+    target.textContent = `导入提示：${parts.slice(0, 5).join("；")}`;
   },
 
   renderThumbnails: () => {
     const strip = document.getElementById("thumbStrip");
     strip.innerHTML = "";
+    App.state.thumbByFilename = new Map();
     if (App.state.thumbObserver) {
       App.state.thumbObserver.disconnect();
       App.state.thumbObserver = null;
@@ -587,13 +623,14 @@ const App = {
       thumb.type = "button";
       thumb.className = `thumb loading ${filename === App.state.currentFilename ? "active" : ""}`;
       thumb.dataset.filename = filename;
-      thumb.title = `${filename} · ${App.statusLabel(item.status)}`;
+      thumb.title = App.manifestStatusTitle(item);
       thumb.innerHTML = `
         <span class="thumb-status ${item.status || "pending"}"></span>
         <span class="thumb-label">${App.statusShortLabel(item.status)}</span>
       `;
       thumb.addEventListener("click", () => App.loadByName(filename));
       strip.appendChild(thumb);
+      App.state.thumbByFilename.set(filename, thumb);
       if (App.state.thumbObserver) {
         App.state.thumbObserver.observe(thumb);
       } else if (index < 80) {
@@ -611,30 +648,87 @@ const App = {
   loadThumbnail: (thumb) => {
     if (!thumb || thumb.dataset.loaded === "1") return;
     const filename = thumb.dataset.filename;
-    thumb.style.backgroundImage = `url(/api/annotation/image/${encodeURIComponent(filename)})`;
+    thumb.style.backgroundImage = `url(/api/annotation/image/${encodeURIComponent(filename)}?thumb=1)`;
     thumb.dataset.loaded = "1";
     thumb.classList.remove("loading");
   },
 
+  setActiveThumbnail: (filename) => {
+    App.state.thumbByFilename.forEach((thumb, key) => {
+      thumb.classList.toggle("active", key === filename);
+    });
+  },
+
+  updateManifestEntryStatus: (filename, progressOrStatus) => {
+    const progress = typeof progressOrStatus === "string" ? { status: progressOrStatus } : progressOrStatus || {};
+    const status = progress.status;
+    if (!filename || !status) return;
+    const item = App.state.manifestByFilename.get(filename);
+    if (!item) return;
+    item.status = status;
+    item.keypoint_status = progress.keypoint_status || item.keypoint_status || "pending";
+    item.shenton_status = progress.shenton_status || item.shenton_status || "pending";
+    item.status_detail = progress.status_detail || item.status_detail || "";
+    if (progress.keypoints) {
+      item.keypoint_visible_count = progress.keypoints.visible;
+      item.keypoint_manual_count = progress.keypoints.manual;
+    }
+    if (progress.shenton) {
+      item.shenton_complete_sides = progress.shenton.complete_sides;
+      item.shenton_started_sides = progress.shenton.started_sides;
+    }
+    const thumb = App.state.thumbByFilename.get(filename);
+    if (thumb) {
+      const statusDot = thumb.querySelector(".thumb-status");
+      const label = thumb.querySelector(".thumb-label");
+      if (statusDot) statusDot.className = `thumb-status ${status}`;
+      if (label) label.textContent = App.statusShortLabel(status);
+      thumb.title = App.manifestStatusTitle(item);
+    }
+  },
+
+  manifestStatusTitle: (item) => {
+    const filename = App.imageFilename(item) || "";
+    const parts = [filename, App.statusLabel(item?.status)];
+    if (item?.status_detail) parts.push(item.status_detail);
+    if (item?.keypoint_status || item?.shenton_status) {
+      parts.push(`关键点 ${App.subStatusLabel(item.keypoint_status)}；Shenton ${App.subStatusLabel(item.shenton_status)}`);
+    }
+    return parts.filter(Boolean).join(" · ");
+  },
+
   statusLabel: (status) => {
     if (status === "auto") return "自动初标待复核";
-    if (status === "in_progress") return "人工修改中";
-    if (status === "done") return "已完成";
+    if (status === "in_progress") return "标注未完成";
+    if (status === "keypoint_complete") return "关键点完成";
+    if (status === "shenton_complete") return "Shenton完成";
+    if (status === "done") return "完成";
     if (status === "queued") return "排队中";
     return "未标注";
   },
 
   statusShortLabel: (status) => {
     if (status === "auto") return "待复核";
-    if (status === "in_progress") return "修改中";
+    if (status === "in_progress") return "未完成";
+    if (status === "keypoint_complete") return "点完成";
+    if (status === "shenton_complete") return "线完成";
     if (status === "done") return "完成";
     return "未标注";
+  },
+
+  subStatusLabel: (status) => {
+    if (status === "complete") return "完成";
+    if (status === "auto") return "待复核";
+    if (status === "in_progress") return "进行中";
+    return "未完成";
   },
 
   filterLabel: (filter) => {
     if (filter === "all") return "全部";
     if (filter === "auto") return "待复核";
-    if (filter === "in_progress") return "修改中";
+    if (filter === "in_progress") return "未完成";
+    if (filter === "keypoint_complete") return "关键点完成";
+    if (filter === "shenton_complete") return "Shenton完成";
     if (filter === "done") return "已完成";
     return "未标注";
   },
@@ -648,7 +742,7 @@ const App = {
     try {
       const res = await fetch(`/api/annotation/load-by-name?filename=${encodeURIComponent(filename)}`);
       App.applyAnnotation(await App.readJsonResponse(res, "load failed"));
-      if (!options.skipManifest) await App.loadManifest();
+      if (options.refreshManifest) await App.loadManifest();
       App.scrollActiveThumbnailIntoView();
     } catch (err) {
       App.setStatus(`打开失败: ${err.message}`);
@@ -684,7 +778,7 @@ const App = {
     if (!filename) return;
     App.state.isNavigating = true;
     try {
-      await App.loadByName(filename);
+      await App.loadByName(filename, { skipManifest: true });
     } finally {
       App.state.isNavigating = false;
     }
@@ -712,6 +806,9 @@ const App = {
     App.state.progress = null;
     App.state.importReport = null;
     App.state.lastSave = null;
+    App.state.lastSavedSnapshot = "";
+    App.state.manifestByFilename = new Map();
+    App.state.thumbByFilename = new Map();
     App.state.history = [];
     App.state.historyIndex = -1;
     App.state.transform = { x: 0, y: 0, scale: 1 };
@@ -801,6 +898,7 @@ const App = {
     App.normalizeScanTransform(annotation);
     App.state.annotation = annotation;
     App.state.currentFilename = annotation.image.filename;
+    App.state.lastSavedSnapshot = App.annotationSnapshot(annotation);
     App.state.selectedPoint = null;
     App.state.selectedShentonPoint = null;
     App.state.selectedScanCorner = null;
@@ -812,6 +910,7 @@ const App = {
     App.state.roiStart = null;
     App.state.roiDraft = null;
     App.state.imageBaseUrl = annotation.image_url || `/api/annotation/image/${encodeURIComponent(annotation.image.filename)}`;
+    App.setActiveThumbnail(annotation.image.filename);
     document.getElementById("annotatorInput").value = annotation.annotator?.user_id || App.state.settings.annotator || "default";
     document.getElementById("imageTitle").textContent = annotation.image.filename;
     App.loadImage(App.imageUrlForCurrentView());
@@ -906,6 +1005,8 @@ const App = {
   normalizeShenton: (annotation) => {
     annotation.shenton_curves = annotation.shenton_curves && typeof annotation.shenton_curves === "object" ? annotation.shenton_curves : {};
     annotation.shenton_review = annotation.shenton_review && typeof annotation.shenton_review === "object" ? annotation.shenton_review : {};
+    annotation.shenton_adjustments =
+      annotation.shenton_adjustments && typeof annotation.shenton_adjustments === "object" ? annotation.shenton_adjustments : {};
     ["left", "right"].forEach((side) => {
       annotation.shenton_curves[side] = annotation.shenton_curves[side] || {};
       ["obturator_upper_curve", "femoral_neck_inner_lower_curve"].forEach((segment) => {
@@ -924,6 +1025,21 @@ const App = {
         status: allowed.includes(review.status) ? review.status : "not_reviewed",
         updated_at: review.updated_at || new Date().toISOString(),
         annotator: review.annotator || document.getElementById("annotatorInput")?.value?.trim() || "default",
+      };
+      const adjustments = annotation.shenton_adjustments[side] || {};
+      const rawIntersection = adjustments.extension_intersection || {};
+      const x = Number(rawIntersection.x);
+      const y = Number(rawIntersection.y);
+      const enabled = Boolean(rawIntersection.enabled) && Number.isFinite(x) && Number.isFinite(y);
+      annotation.shenton_adjustments[side] = {
+        extension_intersection: {
+          enabled,
+          x: enabled ? App.clamp(x, 0, annotation.image.width || 1) : null,
+          y: enabled ? App.clamp(y, 0, annotation.image.height || 1) : null,
+          source: rawIntersection.source || "manual",
+          updated_at: rawIntersection.updated_at || new Date().toISOString(),
+          annotator: rawIntersection.annotator || document.getElementById("annotatorInput")?.value?.trim() || "default",
+        },
       };
     });
   },
@@ -1063,6 +1179,7 @@ const App = {
 
   computeMeasurements: async () => {
     if (!App.state.annotation) return;
+    App.normalizeShenton(App.state.annotation);
     try {
       const res = await fetch("/api/annotation/measurements/compute", {
         method: "POST",
@@ -1149,6 +1266,18 @@ const App = {
     });
   },
 
+  annotationPayloadForSave: (annotation = App.state.annotation) => {
+    if (!annotation) return null;
+    const payload = JSON.parse(JSON.stringify(annotation));
+    delete payload.image_url;
+    return payload;
+  },
+
+  annotationSnapshot: (annotation = App.state.annotation) => {
+    const payload = App.annotationPayloadForSave(annotation);
+    return payload ? JSON.stringify(payload) : "";
+  },
+
   saveAnnotation: async (options = {}) => {
     if (!App.state.annotation) return true;
     App.state.annotation.annotator = App.state.annotation.annotator || {};
@@ -1160,12 +1289,17 @@ const App = {
     }
     App.normalizeRoiCrop(App.state.annotation);
     App.normalizeScanTransform(App.state.annotation);
+    const snapshot = App.annotationSnapshot();
+    if (options.silent && snapshot === App.state.lastSavedSnapshot) {
+      return true;
+    }
     if (!options.silent) App.setStatus("正在保存...");
     try {
-      const res = await fetch("/api/annotation/save", {
+      const saveUrl = `/api/annotation/save${options.skipManifest ? "?skip_manifest=true" : ""}`;
+      const res = await fetch(saveUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(App.state.annotation),
+        body: JSON.stringify(App.annotationPayloadForSave()),
       });
       const payload = await App.readJsonResponse(res, "save failed");
       if (payload.measurements_snapshot) {
@@ -1178,8 +1312,18 @@ const App = {
         annotationPath: payload.annotation_path || "annotations",
         labelPath: payload.label_path || "同名 txt",
       };
+      App.state.lastSavedSnapshot = App.annotationSnapshot();
+      App.updateManifestEntryStatus(
+        App.state.annotation.image.filename,
+        payload.annotation_progress || { status: payload.annotation_status },
+      );
+      App.state.progress = payload.progress || null;
       App.setStatus(options.silent ? "已自动保存" : "已保存");
-      if (!options.skipManifest) await App.loadManifest();
+      if (!options.skipManifest && !payload.progress) {
+        await App.loadManifest();
+      } else {
+        App.renderProgressSummary();
+      }
       App.renderSaveInfo();
       return true;
     } catch (err) {
@@ -1466,14 +1610,14 @@ const App = {
     const pos = App.mousePos(event);
     if (App.state.isDraggingShenton && App.state.selectedShentonPoint) {
       const selected = App.state.selectedShentonPoint;
-      const segment = App.state.annotation?.shenton_curves?.[selected.side]?.[selected.segment];
-      const point = segment?.points?.[selected.index];
-      if (!point) return;
       if (!App.state.dragStarted) {
         App.pushHistory();
         App.state.dragStarted = true;
       }
       const imagePos = App.toImageCoords(pos.x, pos.y);
+      const segment = App.state.annotation?.shenton_curves?.[selected.side]?.[selected.segment];
+      const point = segment?.points?.[selected.index];
+      if (!point) return;
       point.x = App.clamp(imagePos.x, 0, App.state.image.width);
       point.y = App.clamp(imagePos.y, 0, App.state.image.height);
       segment.updated_at = new Date().toISOString();
@@ -1545,7 +1689,7 @@ const App = {
       App.state.roiDraft = null;
       App.pushHistory();
       App.scheduleAutosave();
-      App.setStatus("ROI 已更新；自动识别会优先在该区域内重试");
+      App.setStatus("ROI 已更新；识别会优先使用该区域");
     }
     App.state.isDragging = false;
     App.state.isDraggingShenton = false;
@@ -1858,7 +2002,7 @@ const App = {
     App.renderRoiPanel();
     App.pushHistory();
     App.scheduleAutosave();
-    App.setStatus("ROI 已清空，自动识别将使用全图");
+    App.setStatus("ROI 已清空；识别将使用扫描四角或全图");
   },
 
   fitToRoi: () => {
@@ -1883,10 +2027,10 @@ const App = {
     if (!target) return;
     const roi = App.currentRoiCrop();
     if (!roi) {
-      target.textContent = "拖拽画出需要关注的 X 光区域；识别会优先在 ROI 内重试，保存仍使用原图坐标。";
+      target.textContent = "拖拽画出需要关注的 X 光区域；ROI 启用时识别优先使用 ROI，未启用 ROI 时才使用扫描四角校正。";
       return;
     }
-    target.textContent = `已启用 ROI：x ${roi.x.toFixed(0)}, y ${roi.y.toFixed(0)}, ${roi.width.toFixed(0)} × ${roi.height.toFixed(0)}；识别会优先使用该区域。`;
+    target.textContent = `已启用 ROI：x ${roi.x.toFixed(0)}, y ${roi.y.toFixed(0)}, ${roi.width.toFixed(0)} × ${roi.height.toFixed(0)}；识别会优先使用 ROI。`;
   },
 
   currentScanTransform: () => {
@@ -2016,7 +2160,7 @@ const App = {
     App.normalizeScanTransform(App.state.annotation);
     const scan = App.state.annotation.scan_transform;
     if (scan.enabled) {
-      target.textContent = "扫描四角已启用；自动识别会先透视校正，再映射回原图坐标。";
+      target.textContent = "扫描四角已启用；未启用 ROI 时，识别会先透视校正再映射回原图坐标。";
       return;
     }
     const next = SCAN_CORNER_LABELS[scan.corners.length] || "完成";
@@ -2236,7 +2380,10 @@ const App = {
     if (!a || !b || typeof a.x !== "number" || typeof a.y !== "number" || typeof b.x !== "number" || typeof b.y !== "number") {
       return null;
     }
-    return { a, b };
+    return {
+      a,
+      b,
+    };
   },
 
   closestShentonEndpoints: (side) => {

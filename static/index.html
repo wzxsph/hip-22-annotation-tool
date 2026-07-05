@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>22 点髋关节 X 光标注</title>
-    <link rel="stylesheet" href="/static/style.css?v=scan-shenton-1" />
+    <link rel="stylesheet" href="/static/style.css?v=shenton-intersection-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -20,8 +20,8 @@
           </label>
           <button id="btnFolder" type="button">导入文件夹</button>
           <button id="btnSave" type="button">保存</button>
-          <button id="btnAutoDetect" type="button" title="对当前图片重新运行自动识别；保留已经人工修改的点">自动识别</button>
-          <button id="btnAutoDetectEnhanced" type="button" title="用增强预览图重试自动识别；仅辅助识别，不覆盖原图">增强识别</button>
+          <button id="btnAutoDetect" type="button" title="用原图对当前图片重新识别；保留已经人工修改的点">原图识别</button>
+          <button id="btnAutoDetectEnhanced" type="button" title="用增强预览图识别当前图片；仅辅助识别，不覆盖原图">增强识别</button>
           <button id="btnShortcutHelp" type="button" title="查看快捷键">快捷键</button>
           <button id="btnUndo" type="button" aria-label="撤销">↶</button>
           <button id="btnRedo" type="button" aria-label="重做">↷</button>
@@ -56,7 +56,7 @@
               <button id="btnRoiFit" type="button">适配 ROI</button>
               <button id="btnRoiClear" type="button">清空 ROI</button>
             </div>
-            <small id="roiHintText">拖拽画出需要关注的 X 光区域；识别会优先在 ROI 内重试，保存仍使用原图坐标。</small>
+            <small id="roiHintText">拖拽画出需要关注的 X 光区域；ROI 启用时识别优先使用 ROI，未启用 ROI 时才使用扫描四角校正。</small>
           </div>
           <div class="scan-toolbox" id="scanToolbox" hidden>
             <div class="settings-title">类扫描校正</div>
@@ -64,7 +64,7 @@
               <button id="btnScanFit" type="button">适配扫描区</button>
               <button id="btnScanClear" type="button">清空四角</button>
             </div>
-            <small id="scanHintText">依次点击片子左上、右上、右下、左下四个角；自动识别会先透视校正，再映射回原图坐标。</small>
+            <small id="scanHintText">依次点击片子左上、右上、右下、左下四个角；未启用 ROI 时，识别会先透视校正再映射回原图坐标。</small>
           </div>
           <div class="shenton-toolbox" id="shentonToolbox" hidden>
             <div class="settings-title">Shenton 曲线</div>
@@ -121,7 +121,9 @@
               <button class="active" type="button" data-status-filter="all">全部</button>
               <button type="button" data-status-filter="pending">未标注</button>
               <button type="button" data-status-filter="auto">待复核</button>
-              <button type="button" data-status-filter="in_progress">修改中</button>
+              <button type="button" data-status-filter="in_progress">未完成</button>
+              <button type="button" data-status-filter="keypoint_complete">关键点完成</button>
+              <button type="button" data-status-filter="shenton_complete">Shenton完成</button>
               <button type="button" data-status-filter="done">已完成</button>
             </div>
             <small id="saveInfoText">尚未保存当前图片</small>
@@ -254,7 +256,7 @@
           <span>C</span><span>扫描四角</span>
           <span>S</span><span>Shenton 曲线</span>
           <span>E</span><span>增强图 / 原图</span>
-          <span>D</span><span>自动识别</span>
+          <span>D</span><span>原图识别</span>
           <span>F</span><span>适配当前图</span>
           <span>Ctrl+S</span><span>保存</span>
           <span>← / →</span><span>上一张 / 下一张</span>
@@ -266,6 +268,6 @@
       </form>
     </dialog>
 
-    <script src="/static/app.js?v=scan-shenton-1"></script>
+    <script src="/static/app.js?v=roi-priority-1"></script>
   </body>
 </html>

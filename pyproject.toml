@@ -31,6 +31,8 @@ windows-cpu = [
 
 [project.scripts]
 hip22-annotation-tool = "annotation_tool.desktop:main"
+prepare-shenton-seg-dataset = "scripts.prepare_shenton_seg_dataset:main"
+train-shenton-seg = "scripts.train_shenton_seg:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -38,4 +40,4 @@ pythonpath = ["."]
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["annotation_tool"]
+packages = ["annotation_tool", "scripts"]

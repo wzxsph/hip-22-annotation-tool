@@ -7,16 +7,19 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .completion import annotation_progress
 from .schema import Annotation, Manifest, ManifestImage, annotation_from_dict
 
 
 STATUS_LABELS = {
     "pending": "未标注",
     "auto": "自动初标待复核",
-    "in_progress": "人工修改中",
-    "done": "已完成",
+    "in_progress": "标注未完成",
+    "keypoint_complete": "关键点完成",
+    "shenton_complete": "Shenton完成",
+    "done": "完成",
 }
-STATUS_ORDER = ("pending", "auto", "in_progress", "done")
+STATUS_ORDER = ("pending", "auto", "in_progress", "keypoint_complete", "shenton_complete", "done")
 STATUS_MARKER_GLOB = "HIP22_STATUS_DONE_*_TODO_*.txt"
 HTML_REPORT_NAME = "HIP22_status_report.html"
 CSV_REPORT_NAME = "HIP22_status_report.csv"
@@ -25,7 +28,21 @@ SUBMISSION_README_NAME = "HIP22_SUBMISSION_README.txt"
 
 def build_progress_payload(root: Path, manifest: Manifest | None = None) -> dict[str, Any]:
     rows = build_progress_rows(root, manifest)
+    return build_progress_payload_from_rows(rows)
+
+
+def build_progress_payload_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return _payload_from_counts(progress_counts(rows))
+
+
+def build_progress_payload_from_manifest(manifest: Manifest) -> dict[str, Any]:
+    counts = {status: 0 for status in STATUS_ORDER}
+    for item in manifest.images:
+        status = item.status if item.status in counts else "pending"
+        counts[status] += 1
+    counts["total"] = len(manifest.images)
+    counts["needs_review"] = _needs_review_count(counts)
+    return _payload_from_counts(counts)
 
 
 def write_progress_reports(root: Path, manifest: Manifest | None = None) -> dict[str, Any]:
@@ -63,8 +80,12 @@ def progress_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
         status = row.get("status") if row.get("status") in counts else "pending"
         counts[status] += 1
     counts["total"] = len(rows)
-    counts["needs_review"] = counts["pending"] + counts["auto"] + counts["in_progress"]
+    counts["needs_review"] = _needs_review_count(counts)
     return counts
+
+
+def _needs_review_count(counts: dict[str, int]) -> int:
+    return counts.get("total", 0) - counts.get("done", 0)
 
 
 def _payload_from_counts(counts: dict[str, int]) -> dict[str, Any]:
@@ -91,14 +112,35 @@ def _row_for_manifest_item(root: Path, item: ManifestImage) -> dict[str, Any]:
     auto_source = ""
     visible_count = 0
     manual_count = 0
+    status_detail = ""
+    keypoint_status = "pending"
+    shenton_status = "pending"
+    shenton_complete_sides = 0
+    shenton_started_sides = 0
 
     if annotation is not None:
-        visible_count, manual_count = _annotation_counts(annotation)
-        status = _status_from_counts(visible_count, manual_count)
+        progress = annotation_progress(annotation)
+        keypoints = progress["keypoints"]
+        shenton = progress["shenton"]
+        visible_count = int(keypoints["visible"])
+        manual_count = int(keypoints["manual"])
+        status = str(progress["status"])
+        status_detail = str(progress["status_detail"])
+        keypoint_status = str(progress["keypoint_status"])
+        shenton_status = str(progress["shenton_status"])
+        shenton_complete_sides = int(shenton["complete_sides"])
+        shenton_started_sides = int(shenton["started_sides"])
         auto_source = str(annotation.auto_initialization.get("source") or "")
         warnings = [str(item) for item in annotation.auto_initialization.get("warnings", [])]
     else:
         status = item.status if item.status in STATUS_LABELS else "pending"
+        status_detail = getattr(item, "status_detail", "") or ""
+        keypoint_status = getattr(item, "keypoint_status", "pending") or "pending"
+        shenton_status = getattr(item, "shenton_status", "pending") or "pending"
+        visible_count = int(getattr(item, "keypoint_visible_count", 0) or 0)
+        manual_count = int(getattr(item, "keypoint_manual_count", 0) or 0)
+        shenton_complete_sides = int(getattr(item, "shenton_complete_sides", 0) or 0)
+        shenton_started_sides = int(getattr(item, "shenton_started_sides", 0) or 0)
         if annotation_path.exists():
             warnings.append("标注 JSON 无法读取，请联系整理人员。")
         elif status != "pending":
@@ -108,8 +150,13 @@ def _row_for_manifest_item(root: Path, item: ManifestImage) -> dict[str, Any]:
         "filename": filename,
         "status": status,
         "status_label": STATUS_LABELS.get(status, STATUS_LABELS["pending"]),
+        "status_detail": status_detail,
+        "keypoint_status": keypoint_status,
+        "shenton_status": shenton_status,
         "visible_count": visible_count,
         "manual_count": manual_count,
+        "shenton_complete_sides": shenton_complete_sides,
+        "shenton_started_sides": shenton_started_sides,
         "auto_source": auto_source,
         "warnings": "; ".join(warnings),
         "json_exists": annotation_path.exists(),
@@ -117,29 +164,6 @@ def _row_for_manifest_item(root: Path, item: ManifestImage) -> dict[str, Any]:
         "annotation_path": _relative_text(annotation_path, root),
         "label_path": _relative_text(label_path, root),
     }
-
-
-def _annotation_counts(annotation: Annotation) -> tuple[int, int]:
-    visible_count = 0
-    manual_count = 0
-    for point in annotation.keypoints.values():
-        visible = bool(point.visible and point.x is not None and point.y is not None)
-        if not visible:
-            continue
-        visible_count += 1
-        if point.source == "manual":
-            manual_count += 1
-    return visible_count, manual_count
-
-
-def _status_from_counts(visible_count: int, manual_count: int) -> str:
-    if visible_count == 0:
-        return "pending"
-    if manual_count == 0:
-        return "auto"
-    if visible_count == 22:
-        return "done"
-    return "in_progress"
 
 
 def _annotation_path(root: Path, item: ManifestImage) -> Path:
@@ -193,7 +217,10 @@ def _status_marker_text(counts: dict[str, int]) -> str:
         f"待处理：{counts['needs_review']} 张\n"
         f"未标注：{counts['pending']} 张\n"
         f"自动初标待复核：{counts['auto']} 张\n"
-        f"人工修改中：{counts['in_progress']} 张\n\n"
+        f"标注未完成：{counts['in_progress']} 张\n"
+        f"关键点完成：{counts['keypoint_complete']} 张\n"
+        f"Shenton完成：{counts['shenton_complete']} 张\n\n"
+        "已完成表示：关键点 22/22 且左右两侧 Shenton 曲线均已标注并完成医生判断。\n"
         "请打开 HIP22_status_report.html 查看每张图片的状态。\n"
         "医生标注完成后，保存并将整个文件夹发送给项目团队即可。\n"
     )
@@ -211,6 +238,7 @@ def _submission_readme_text(counts: dict[str, int]) -> str:
         f"当前总数：{counts['total']} 张\n"
         f"已完成：{counts['done']} 张\n"
         f"仍需处理：{counts['needs_review']} 张\n\n"
+        "注意：关键点完成、Shenton完成都只是中间状态；两者都完成才算整张图片完成。\n\n"
         "如果文件命名混乱、目录嵌套复杂、无法导入，或不确定如何整理，可先将照片发给项目团队整理后再标注。\n"
     )
 
@@ -222,8 +250,13 @@ def _csv_report(rows: list[dict[str, Any]]) -> str:
         fieldnames=[
             "filename",
             "status_label",
+            "status_detail",
+            "keypoint_status",
+            "shenton_status",
             "visible_count",
             "manual_count",
+            "shenton_complete_sides",
+            "shenton_started_sides",
             "auto_source",
             "warnings",
             "json_exists",
@@ -247,7 +280,9 @@ def _html_report(rows: list[dict[str, Any]], counts: dict[str, int]) -> str:
         "<tr>"
         f"<td>{html.escape(row['filename'])}</td>"
         f"<td><span class='badge {html.escape(row['status'])}'>{html.escape(row['status_label'])}</span></td>"
+        f"<td>{html.escape(row['status_detail'] or '-')}</td>"
         f"<td>{row['visible_count']}/22</td>"
+        f"<td>{row['shenton_complete_sides']}/2</td>"
         f"<td>{row['manual_count']}</td>"
         f"<td>{html.escape(row['auto_source'] or '-')}</td>"
         f"<td>{html.escape(row['warnings'] or '-')}</td>"
@@ -265,7 +300,7 @@ def _html_report(rows: list[dict[str, Any]], counts: dict[str, int]) -> str:
       body {{ font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; margin: 24px; color: #182026; }}
       h1 {{ margin: 0 0 8px; font-size: 24px; }}
       p {{ color: #5d6972; }}
-      .summary {{ display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 12px; margin: 20px 0; }}
+      .summary {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 20px 0; }}
       .summary div {{ border: 1px solid #d7dee2; border-radius: 8px; padding: 12px; background: #f7f9fa; }}
       .summary span {{ display: block; color: #68747d; font-size: 13px; }}
       .summary strong {{ display: block; margin-top: 6px; font-size: 26px; }}
@@ -276,19 +311,23 @@ def _html_report(rows: list[dict[str, Any]], counts: dict[str, int]) -> str:
       .pending {{ background: #868e96; }}
       .auto {{ background: #6741d9; }}
       .in_progress {{ background: #e67700; }}
+      .keypoint_complete {{ background: #0b7285; }}
+      .shenton_complete {{ background: #1c7ed6; }}
       .done {{ background: #2f9e44; }}
     </style>
   </head>
   <body>
     <h1>Hip22 标注进度</h1>
-    <p>保存后将整个文件夹发送给项目团队即可。未标注、自动初标待复核、人工修改中都属于仍需处理。</p>
+    <p>保存后将整个文件夹发送给项目团队即可。关键点完成、Shenton完成都属于中间状态；完成表示关键点和 Shenton 均完成。</p>
     <section class="summary">{summary_cards}</section>
     <table>
       <thead>
         <tr>
           <th>文件名</th>
           <th>状态</th>
+          <th>说明</th>
           <th>可见点</th>
+          <th>Shenton完成</th>
           <th>人工点</th>
           <th>自动来源</th>
           <th>提示</th>

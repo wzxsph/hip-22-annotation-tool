@@ -87,6 +87,7 @@ def compute_shenton_side(annotation: Annotation, side: str) -> dict[str, Any]:
             "threshold": round(max_extension_threshold, 2),
         },
         "extension_projection": extension["projection"],
+        "extension_source": extension.get("source", "auto"),
         "tangent_angle_deg": round(tangent_angle, 2),
         "thresholds": {
             "gap_px": SHENTON_GAP_THRESHOLD_PX,
@@ -243,7 +244,7 @@ def _shenton_extension_geometry(
         "points_px": {
             "obturator_upper_curve": _round_point(point_a),
             "femoral_neck_inner_lower_curve": _round_point(point_b),
-            "intersection": _round_point(point_a) if gap_px <= 1e-6 else None,
+            "intersection": None,
         },
     }
 

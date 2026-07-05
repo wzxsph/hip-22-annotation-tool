@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+from .completion import PROGRESS_STATUS_VERSION, annotation_progress
 from .paths import default_dataset_root, runtime_root
 from .schema import Annotation, Manifest, ManifestImage, annotation_from_dict, model_to_dict, normalize_split, utc_now
 
@@ -113,6 +114,31 @@ def annotation_path(image_filename: str, root: Path = ROOT) -> Path:
     return annotations_dir(root) / f"{Path(image_filename).stem}.json"
 
 
+def annotation_path_candidates(image_filename: str, root: Path = ROOT, image_path: Path | None = None) -> list[Path]:
+    stem = Path(image_filename).stem
+    candidates = [annotation_path(image_filename, root)]
+    if image_path is not None:
+        candidates.append(image_path.with_suffix(".json"))
+    candidates.append(root / f"{stem}.json")
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for candidate in candidates:
+        key = candidate.expanduser().resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def find_annotation_path(image_filename: str, root: Path = ROOT, image_path: Path | None = None) -> Path | None:
+    for candidate in annotation_path_candidates(image_filename, root, image_path):
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
 def image_path_for(image_filename: str, root: Path = ROOT, split: str = "train") -> Path:
     return root / Path(image_filename).name
 
@@ -176,12 +202,23 @@ def checksum_sha256(file_path: Path) -> str:
     return h.hexdigest()
 
 
+def load_annotation_from_path(path: Path) -> Annotation:
+    with open(path, "r", encoding="utf-8") as handle:
+        return annotation_from_dict(json.load(handle))
+
+
 def load_annotation(image_filename: str, root: Path = ROOT) -> Optional[Annotation]:
     path = annotation_path(image_filename, root)
     if not path.exists():
         return None
-    with open(path, "r", encoding="utf-8") as handle:
-        return annotation_from_dict(json.load(handle))
+    return load_annotation_from_path(path)
+
+
+def load_annotation_for_image(image_filename: str, root: Path = ROOT, image_path: Path | None = None) -> Optional[Annotation]:
+    path = find_annotation_path(image_filename, root, image_path)
+    if path is None:
+        return None
+    return load_annotation_from_path(path)
 
 
 def load_annotation_from_yolo_label(
@@ -258,17 +295,51 @@ def save_manifest(manifest: Manifest, root: Path = ROOT) -> Path:
 
 
 def annotation_status(annotation: Annotation) -> str:
-    visible_count = sum(1 for kp in annotation.keypoints.values() if kp.visible and kp.x is not None and kp.y is not None)
-    manual_count = sum(1 for kp in annotation.keypoints.values() if kp.visible and kp.source == "manual")
-    if visible_count == 0:
-        return "pending"
-    if manual_count == 0:
-        return "auto"
-    if visible_count == 22:
-        return "done"
-    if manual_count > 0:
-        return "in_progress"
-    return "pending"
+    return str(annotation_progress(annotation)["status"])
+
+
+def manifest_image_for_path(
+    image_path: Path,
+    *,
+    annotation: Annotation | None = None,
+    root: Path = ROOT,
+    split: str = "train",
+    compute_checksum: bool = False,
+) -> ManifestImage:
+    image_id = image_path.stem
+    split = normalize_split(getattr(annotation.image, "split", split) if annotation else split)
+    try:
+        rel_image_path = image_path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        rel_image_path = f"{IMAGES_DIRNAME}/{split}/{image_path.name}"
+    rel_annotation_path = f"{ANNOTATIONS_DIRNAME}/{image_path.stem}.json"
+    progress = annotation_progress(annotation) if annotation else None
+    status = str(progress["status"]) if progress else "pending"
+    annotator = annotation.annotator.user_id if annotation else ""
+    completed_at = utc_now() if status == "done" else None
+    checksum = checksum_sha256(image_path) if compute_checksum and image_path.exists() else None
+    keypoints = progress["keypoints"] if progress else {}
+    shenton = progress["shenton"] if progress else {}
+    annotation_file = annotation_path(image_path.name, root)
+    annotation_mtime_ns = annotation_file.stat().st_mtime_ns if annotation and annotation_file.exists() else 0
+    return ManifestImage(
+        id=image_id,
+        image_path=rel_image_path,
+        annotation_path=rel_annotation_path,
+        status=status,
+        keypoint_status=str(progress["keypoint_status"]) if progress else "pending",
+        shenton_status=str(progress["shenton_status"]) if progress else "pending",
+        status_detail=str(progress["status_detail"]) if progress else "",
+        keypoint_visible_count=int(keypoints.get("visible", 0)),
+        keypoint_manual_count=int(keypoints.get("manual", 0)),
+        shenton_complete_sides=int(shenton.get("complete_sides", 0)),
+        shenton_started_sides=int(shenton.get("started_sides", 0)),
+        annotation_mtime_ns=annotation_mtime_ns,
+        progress_status_version=PROGRESS_STATUS_VERSION,
+        annotator=annotator,
+        completed_at=completed_at,
+        checksum_sha256=checksum,
+    )
 
 
 def upsert_manifest_image(
@@ -282,37 +353,32 @@ def upsert_manifest_image(
     with _manifest_lock:
         ensure_dataset_layout(root)
         manifest = load_manifest(root)
-        image_id = image_path.stem
-        split = normalize_split(getattr(annotation.image, "split", split) if annotation else split)
-        try:
-            rel_image_path = image_path.resolve().relative_to(root.resolve()).as_posix()
-        except ValueError:
-            rel_image_path = f"{IMAGES_DIRNAME}/{split}/{image_path.name}"
-        rel_annotation_path = f"{ANNOTATIONS_DIRNAME}/{image_path.stem}.json"
-        existing = next((item for item in manifest.images if item.id == image_id), None)
-        status = annotation_status(annotation) if annotation else "pending"
-        annotator = annotation.annotator.user_id if annotation else ""
-        completed_at = utc_now() if status == "done" else None
-        checksum = checksum_sha256(image_path) if compute_checksum and image_path.exists() else None
+        item = manifest_image_for_path(
+            image_path,
+            annotation=annotation,
+            root=root,
+            split=split,
+            compute_checksum=compute_checksum,
+        )
+        existing = next((existing_item for existing_item in manifest.images if existing_item.id == item.id), None)
         if existing is None:
-            manifest.images.append(
-                ManifestImage(
-                    id=image_id,
-                    image_path=rel_image_path,
-                    annotation_path=rel_annotation_path,
-                    status=status,
-                    annotator=annotator,
-                    completed_at=completed_at,
-                    checksum_sha256=checksum,
-                )
-            )
+            manifest.images.append(item)
         else:
-            existing.image_path = rel_image_path
-            existing.annotation_path = rel_annotation_path
-            existing.status = status
-            existing.annotator = annotator
-            existing.completed_at = completed_at
-            existing.checksum_sha256 = checksum
+            existing.image_path = item.image_path
+            existing.annotation_path = item.annotation_path
+            existing.status = item.status
+            existing.keypoint_status = item.keypoint_status
+            existing.shenton_status = item.shenton_status
+            existing.status_detail = item.status_detail
+            existing.keypoint_visible_count = item.keypoint_visible_count
+            existing.keypoint_manual_count = item.keypoint_manual_count
+            existing.shenton_complete_sides = item.shenton_complete_sides
+            existing.shenton_started_sides = item.shenton_started_sides
+            existing.annotation_mtime_ns = item.annotation_mtime_ns
+            existing.progress_status_version = item.progress_status_version
+            existing.annotator = item.annotator
+            existing.completed_at = item.completed_at
+            existing.checksum_sha256 = item.checksum_sha256
         save_manifest(manifest, root)
         return manifest
 

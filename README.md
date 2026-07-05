@@ -128,17 +128,19 @@ Version 0.2.0 adds prerelease research support for DICOM and Shenton curve colle
 - If a reviewer marks four scan corners, current-image auto-detect first warps the image into a scan-like view, then maps detected points back to the original image coordinates. This is intended for phone-shot images with visible film borders.
 - If model output is unavailable or incomplete, missing points are filled with `template_guess` points from a normalized demo-derived template. These are starting positions only and require review.
 - Default 22-point guide connections are hidden by default to reduce occlusion. Manual connections, Shenton curves, measurement lines, and point labels each have separate display toggles.
-- The Shenton tool lets a reviewer mark left/right obturator upper curve and femoral-neck inner-lower curve with at least 3 points per segment; more points are allowed for curve fitting. The measurement snapshot reports both endpoint gap and forward-extension gap. Measurements are research aids only, not clinical conclusions.
+- The Shenton tool lets a reviewer mark left/right obturator upper curve and femoral-neck inner-lower curve with at least 3 points per segment; more points are allowed for curve fitting. The reviewer records `continuous`, `discontinuous`, or `uncertain`. The tool no longer asks reviewers to mark an extension intersection; legacy intersection fields are read for compatibility only and are ignored by training export. Measurements are research aids only, not clinical conclusions.
 - `/api/annotation/measurements/compute` returns Shenton `gap_px`, optional `gap_mm`, tangent angle, AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, acetabular depth, and warnings. Acetabular depth is shown in mm when DICOM PixelSpacing is available.
 
 Internal research export:
 
 ```bash
 uv run python scripts/export_shenton_training_set.py --workspace /path/to/workspace --output /path/to/out --overwrite
+uv run prepare-shenton-seg-dataset --workspace /path/to/workspace --output /home/samsong/Desktop/hip-xray-ai/datasets/derived/shenton-seg-v1 --overwrite
+uv run train-shenton-seg --data /home/samsong/Desktop/hip-xray-ai/datasets/derived/shenton-seg-v1/yolo_seg/data.yaml --dry-run
 uv run python scripts/prepare_scan_like_images.py --input /path/to/raw-phone-photos --output /path/to/clean-scan-like --overwrite
 ```
 
-The script writes `shenton_curves.jsonl` and a YOLO pose dataset with two classes: `obturator_shenton_arc` and `femoral_neck_shenton_arc`, each resampled to four control points.
+The Shenton export writes per-side ROI images and a YOLO segmentation dataset with two narrow-band mask classes: `obturator_upper_curve` and `femoral_neck_inner_lower_curve`. Doctor continuity status is stored in JSONL/ROI metadata for evaluation; it is not a segmentation class.
 The scan-like preparation script writes enhanced perspective-corrected images plus `scan_like_mapping.csv` and `scan_like_report.json`; use it only for local/internal data organization unless image permissions are confirmed.
 
 ## Workspace Layout

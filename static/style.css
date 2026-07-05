@@ -721,6 +721,14 @@ button:hover,
   background: var(--estimated);
 }
 
+.thumb-status.keypoint_complete {
+  background: var(--accent);
+}
+
+.thumb-status.shenton_complete {
+  background: var(--right);
+}
+
 .thumb-status.auto {
   background: var(--retuve);
 }

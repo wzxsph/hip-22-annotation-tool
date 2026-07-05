@@ -60,6 +60,31 @@ def test_legacy_annotation_gets_shenton_defaults():
     assert legacy.shenton_curves["left"]["obturator_upper_curve"]["points"] == []
     assert legacy.shenton_curves["right"]["femoral_neck_inner_lower_curve"]["points"] == []
     assert legacy.shenton_review["left"]["status"] == "not_reviewed"
+    assert legacy.shenton_adjustments["left"]["extension_intersection"]["enabled"] is False
+
+
+def test_shenton_manual_extension_intersection_is_normalized():
+    annotation = annotation_from_dict(
+        {
+            "image": {"filename": "case.png", "width": 100, "height": 80},
+            "keypoints": {},
+            "shenton_adjustments": {
+                "left": {
+                    "extension_intersection": {
+                        "enabled": True,
+                        "x": 120,
+                        "y": 40,
+                        "source": "manual",
+                    }
+                }
+            },
+        }
+    )
+
+    point = annotation.shenton_adjustments["left"]["extension_intersection"]
+    assert point["enabled"] is True
+    assert point["x"] == 100
+    assert point["y"] == 40
 
 
 def test_legacy_annotation_gets_roi_crop_default():

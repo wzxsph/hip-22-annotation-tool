@@ -132,6 +132,22 @@ def default_shenton_review(*, annotator: str = "") -> dict[str, Any]:
     }
 
 
+def default_shenton_adjustments(*, annotator: str = "") -> dict[str, Any]:
+    return {
+        side: {
+            "extension_intersection": {
+                "enabled": False,
+                "x": None,
+                "y": None,
+                "source": "manual",
+                "updated_at": utc_now(),
+                "annotator": annotator,
+            }
+        }
+        for side in SIDES
+    }
+
+
 def default_roi_crop(*, annotator: str = "") -> dict[str, Any]:
     return {
         "enabled": False,
@@ -187,6 +203,7 @@ class Annotation(ExtraModel):
     connections: List[Connection] = Field(default_factory=list)
     shenton_curves: Dict[str, Any] = Field(default_factory=default_shenton_curves)
     shenton_review: Dict[str, Any] = Field(default_factory=default_shenton_review)
+    shenton_adjustments: Dict[str, Any] = Field(default_factory=default_shenton_adjustments)
     roi_crop: Dict[str, Any] = Field(default_factory=default_roi_crop)
     scan_transform: Dict[str, Any] = Field(default_factory=default_scan_transform)
     auto_initialization: Dict[str, Any] = Field(default_factory=dict)
@@ -199,6 +216,15 @@ class ManifestImage(ExtraModel):
     image_path: str
     annotation_path: str
     status: str = "pending"
+    keypoint_status: str = "pending"
+    shenton_status: str = "pending"
+    status_detail: str = ""
+    keypoint_visible_count: int = 0
+    keypoint_manual_count: int = 0
+    shenton_complete_sides: int = 0
+    shenton_started_sides: int = 0
+    annotation_mtime_ns: int = 0
+    progress_status_version: int = 0
     annotator: str = ""
     completed_at: Optional[str] = None
     review_status: str = "pending"
@@ -409,6 +435,39 @@ def normalize_shenton(annotation: Annotation) -> Annotation:
             "annotator": raw_side.get("annotator") or annotator,
         }
     annotation.shenton_review = normalized_review
+
+    raw_adjustments = annotation.shenton_adjustments if isinstance(annotation.shenton_adjustments, dict) else {}
+    normalized_adjustments = default_shenton_adjustments(annotator=annotator)
+    image_width = max(1.0, float(annotation.image.width or 1))
+    image_height = max(1.0, float(annotation.image.height or 1))
+    for side in SIDES:
+        raw_side = raw_adjustments.get(side, {}) if isinstance(raw_adjustments.get(side, {}), dict) else {}
+        raw_intersection = raw_side.get("extension_intersection", {})
+        if not isinstance(raw_intersection, dict):
+            raw_intersection = {}
+        x = raw_intersection.get("x")
+        y = raw_intersection.get("y")
+        try:
+            x_float = float(x)
+            y_float = float(y)
+            has_point = True
+        except (TypeError, ValueError):
+            x_float = None
+            y_float = None
+            has_point = False
+        enabled = bool(raw_intersection.get("enabled")) and has_point
+        if enabled:
+            x_float = max(0.0, min(image_width, x_float))
+            y_float = max(0.0, min(image_height, y_float))
+        normalized_adjustments[side]["extension_intersection"] = {
+            "enabled": enabled,
+            "x": x_float if enabled else None,
+            "y": y_float if enabled else None,
+            "source": raw_intersection.get("source") or "manual",
+            "updated_at": raw_intersection.get("updated_at") or utc_now(),
+            "annotator": raw_intersection.get("annotator") or annotator,
+        }
+    annotation.shenton_adjustments = normalized_adjustments
     return annotation
 
 
