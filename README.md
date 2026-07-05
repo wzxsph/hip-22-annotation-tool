@@ -22,6 +22,8 @@ This project is a research annotation aid. It is not a medical device, does not 
 - Supports a non-destructive ROI crop box for cluttered-background images; recognition can retry inside the ROI while saved coordinates remain in the original image coordinate system.
 - Supports a four-corner scan-like transform for phone-shot X-rays; current-image recognition can run on the perspective-corrected view and map points back to original coordinates.
 - Writes visible workspace progress files so a folder can show which images are unfinished, auto-initialized, in progress, or complete.
+- Lets reviewers manually confirm keypoint completion or Shenton completion when clinically valid images have unmarkable/missing structures; the UI warns before confirming incomplete work.
+- Provides next-image workflow buttons for pending, review-needed, Shenton-incomplete, and quality-warning cases.
 - Saves complete annotation JSON to `annotations/<image_stem>.json`.
 - Saves YOLO Pose sidecar labels to `<image_stem>.txt` beside each image.
 - Supports zoom, pan, drag-to-correct, missing-point marking, undo/redo, manual connections, Shenton curve collection, and keyboard image navigation.
@@ -226,6 +228,7 @@ The UI treats a point as visible only when `visible = true`, `visibility > 0`, a
 | Space + drag | Pan |
 | Fit / `F` | Recenter and scale the current image to the canvas; in ROI/scan mode it fits the ROI or scan region when available |
 | `←` / `→` | Previous / next image |
+| `M` | Select the next missing keypoint and switch to point placement |
 | `Delete` | Mark selected point missing, or hide/delete selected connection |
 | `Ctrl+S` | Save |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
@@ -235,6 +238,8 @@ The UI treats a point as visible only when `visible = true`, `visibility > 0`, a
 | `F` | Fit image, fit ROI while using the ROI tool, or fit the scan region while using the scan tool |
 | `?` | Show keyboard shortcuts |
 | `H` | Toggle point labels |
+
+Completion status normally requires all 22 keypoints plus both Shenton sides. When a point or Shenton curve cannot be marked, reviewers can use the manual completion buttons; the confirmation is stored in `annotation.review` and the progress status treats that part as complete.
 
 ## YOLO Pose Label Format
 

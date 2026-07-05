@@ -148,6 +148,12 @@ const App = {
     document.getElementById("annotatorInput").addEventListener("change", App.saveSettings);
     document.getElementById("btnSave").addEventListener("click", () => App.saveAnnotation());
     document.getElementById("btnClearPoints").addEventListener("click", App.clearCurrentImagePoints);
+    document.getElementById("btnConfirmKeypoints").addEventListener("click", App.confirmKeypointsComplete);
+    document.getElementById("btnConfirmShenton").addEventListener("click", App.confirmShentonComplete);
+    document.getElementById("btnNextPending").addEventListener("click", () => App.loadNextMatchingImage(App.isPendingImage, "没有下一张未标注图片"));
+    document.getElementById("btnNextReview").addEventListener("click", () => App.loadNextMatchingImage(App.isReviewImage, "没有下一张待复核图片"));
+    document.getElementById("btnNextShenton").addEventListener("click", () => App.loadNextMatchingImage(App.isShentonIncompleteImage, "没有下一张 Shenton 未完成图片"));
+    document.getElementById("btnNextWarning").addEventListener("click", () => App.loadNextMatchingImage(App.isQualityWarningImage, "没有下一张有质量警告的图片"));
     document.getElementById("btnAutoDetect").addEventListener("click", App.handleAutoDetectCurrent);
     document.getElementById("btnAutoDetectEnhanced").addEventListener("click", () => App.handleAutoDetectCurrent({ useEnhanced: true }));
     document.getElementById("btnShortcutHelp").addEventListener("click", App.showShortcuts);
@@ -667,6 +673,7 @@ const App = {
     const item = App.state.manifestByFilename.get(filename);
     if (!item) return;
     item.status = status;
+    item.annotator = App.state.annotation?.annotator?.user_id || item.annotator || "";
     item.keypoint_status = progress.keypoint_status || item.keypoint_status || "pending";
     item.shenton_status = progress.shenton_status || item.shenton_status || "pending";
     item.status_detail = progress.status_detail || item.status_detail || "";
@@ -785,6 +792,50 @@ const App = {
     }
   },
 
+  loadNextMatchingImage: async (predicate, emptyMessage) => {
+    if (App.state.isNavigating) return;
+    const images = App.state.manifestImages || [];
+    if (!images.length) {
+      App.setStatus("当前工作区没有图片");
+      return;
+    }
+    const current = App.currentManifestIndex();
+    const start = current >= 0 ? current : -1;
+    for (let offset = 1; offset <= images.length; offset += 1) {
+      const index = (start + offset + images.length) % images.length;
+      const item = images[index];
+      if (!predicate(item)) continue;
+      const filename = App.imageFilename(item);
+      if (!filename) continue;
+      App.state.isNavigating = true;
+      try {
+        await App.loadByName(filename, { skipManifest: true });
+      } finally {
+        App.state.isNavigating = false;
+      }
+      return;
+    }
+    App.setStatus(emptyMessage);
+  },
+
+  isPendingImage: (item) => (item?.status || "pending") === "pending",
+
+  isReviewImage: (item) => (item?.status || "pending") === "auto" || item?.keypoint_status === "auto",
+
+  isShentonIncompleteImage: (item) => item?.shenton_status !== "complete",
+
+  isQualityWarningImage: (item) => {
+    const visible = Number(item?.keypoint_visible_count || 0);
+    const manual = Number(item?.keypoint_manual_count || 0);
+    return (
+      (item?.status || "pending") === "auto" ||
+      item?.keypoint_status === "auto" ||
+      (visible > 0 && manual === 0) ||
+      (visible > 0 && visible < 22) ||
+      item?.shenton_status === "in_progress"
+    );
+  },
+
   scrollActiveThumbnailIntoView: () => {
     const active = document.querySelector(".thumb.active");
     if (!active) return;
@@ -820,6 +871,7 @@ const App = {
     App.renderProgressSummary();
     App.renderShentonPanel();
     App.renderMeasurements();
+    App.renderManualCompletion();
     App.syncDisplayToggles();
     document.getElementById("selectedConnectionLabel").textContent = "未选中连线";
     document.querySelectorAll(".point-row").forEach((row) => {
@@ -894,6 +946,7 @@ const App = {
 
   applyAnnotation: (annotation) => {
     annotation.connections = Array.isArray(annotation.connections) ? annotation.connections : [];
+    App.normalizeReview(annotation);
     App.normalizeShenton(annotation);
     App.normalizeRoiCrop(annotation);
     App.normalizeScanTransform(annotation);
@@ -919,6 +972,7 @@ const App = {
     App.refreshAll();
     App.renderWarnings();
     App.renderSaveInfo();
+    App.renderManualCompletion();
     App.syncImageViewButtons();
     App.scheduleMeasurementCompute();
   },
@@ -1003,6 +1057,19 @@ const App = {
     };
   },
 
+  normalizeReview: (annotation) => {
+    annotation.review = annotation.review && typeof annotation.review === "object" ? annotation.review : {};
+    ["manual_keypoints_complete", "manual_shenton_complete"].forEach((key) => {
+      const current = annotation.review[key] && typeof annotation.review[key] === "object" ? annotation.review[key] : {};
+      annotation.review[key] = {
+        status: current.status === "confirmed" ? "confirmed" : "pending",
+        updated_at: current.updated_at || null,
+        annotator: current.annotator || "",
+        note: current.note || "",
+      };
+    });
+  },
+
   normalizeShenton: (annotation) => {
     annotation.shenton_curves = annotation.shenton_curves && typeof annotation.shenton_curves === "object" ? annotation.shenton_curves : {};
     annotation.shenton_review = annotation.shenton_review && typeof annotation.shenton_review === "object" ? annotation.shenton_review : {};
@@ -1043,6 +1110,92 @@ const App = {
         },
       };
     });
+  },
+
+  visibleKeypointCount: () =>
+    Object.values(App.state.annotation?.keypoints || {}).filter((point) => App.pointIsVisible(point)).length,
+
+  missingKeypointCount: () => Math.max(0, 22 - App.visibleKeypointCount()),
+
+  shentonClientProgress: () => {
+    const progress = { completeSides: 0, startedSides: 0, totalSides: 2, complete: false };
+    const curves = App.state.annotation?.shenton_curves || {};
+    const reviews = App.state.annotation?.shenton_review || {};
+    ["left", "right"].forEach((side) => {
+      const obturator = curves[side]?.obturator_upper_curve?.points || [];
+      const femoral = curves[side]?.femoral_neck_inner_lower_curve?.points || [];
+      const reviewStatus = reviews[side]?.status || "not_reviewed";
+      const reviewed = ["continuous", "discontinuous", "uncertain"].includes(reviewStatus);
+      const curvesComplete = obturator.length >= 3 && femoral.length >= 3;
+      const started = obturator.length > 0 || femoral.length > 0 || reviewStatus !== "not_reviewed";
+      if (started) progress.startedSides += 1;
+      if (curvesComplete && reviewed) progress.completeSides += 1;
+    });
+    progress.complete = progress.completeSides === progress.totalSides;
+    return progress;
+  },
+
+  reviewConfirmed: (key) => App.state.annotation?.review?.[key]?.status === "confirmed",
+
+  confirmKeypointsComplete: () => {
+    if (!App.state.annotation) return;
+    App.normalizeReview(App.state.annotation);
+    const missing = App.missingKeypointCount();
+    const message = missing
+      ? `当前还有 ${missing} 个关键点未标记。仍要人工确认关键点完成吗？`
+      : "确认当前图片关键点已完成吗？";
+    if (!window.confirm(message)) return;
+    App.pushHistory();
+    App.state.annotation.review.manual_keypoints_complete = {
+      status: "confirmed",
+      updated_at: new Date().toISOString(),
+      annotator: document.getElementById("annotatorInput").value.trim() || "default",
+      note: missing ? `人工确认完成，仍有 ${missing} 个关键点缺失。` : "人工确认关键点完成。",
+    };
+    App.refreshAll();
+    App.pushHistory();
+    App.saveAnnotation();
+  },
+
+  confirmShentonComplete: () => {
+    if (!App.state.annotation) return;
+    App.normalizeReview(App.state.annotation);
+    const progress = App.shentonClientProgress();
+    const missingSides = progress.totalSides - progress.completeSides;
+    const message = missingSides
+      ? `当前还有 ${missingSides} 侧 Shenton 未达到常规完成条件。仍要人工确认 Shenton 完成吗？`
+      : "确认当前图片 Shenton 已完成吗？";
+    if (!window.confirm(message)) return;
+    App.pushHistory();
+    App.state.annotation.review.manual_shenton_complete = {
+      status: "confirmed",
+      updated_at: new Date().toISOString(),
+      annotator: document.getElementById("annotatorInput").value.trim() || "default",
+      note: missingSides ? `人工确认完成，仍有 ${missingSides} 侧 Shenton 未满足常规条件。` : "人工确认 Shenton 完成。",
+    };
+    App.refreshAll();
+    App.pushHistory();
+    App.saveAnnotation();
+  },
+
+  renderManualCompletion: () => {
+    const target = document.getElementById("manualCompletionText");
+    if (!target) return;
+    if (!App.state.annotation) {
+      target.textContent = "尚未人工确认完成状态";
+      return;
+    }
+    App.normalizeReview(App.state.annotation);
+    const parts = [];
+    if (App.reviewConfirmed("manual_keypoints_complete")) {
+      const item = App.state.annotation.review.manual_keypoints_complete;
+      parts.push(`关键点已由 ${item.annotator || "default"} 确认`);
+    }
+    if (App.reviewConfirmed("manual_shenton_complete")) {
+      const item = App.state.annotation.review.manual_shenton_complete;
+      parts.push(`Shenton 已由 ${item.annotator || "default"} 确认`);
+    }
+    target.textContent = parts.length ? parts.join("；") : "尚未人工确认完成状态";
   },
 
   currentShentonSegment: () => {
@@ -1170,7 +1323,7 @@ const App = {
     select.value = App.state.annotation.shenton_review[App.state.shentonSide]?.status || "not_reviewed";
     const segment = App.currentShentonSegment();
     const count = segment?.points?.length || 0;
-    hint.textContent = `当前段 ${count} 个点；至少 3 点后可计算 Shenton 连续性候选，点越多越贴合曲线。`;
+    hint.textContent = `当前段 ${count} 个点；至少 3 点后可显示两段曲线最近端点 gap，点越多越贴合曲线。`;
   },
 
   scheduleMeasurementCompute: () => {
@@ -1277,6 +1430,7 @@ const App = {
     }
     App.normalizeRoiCrop(App.state.annotation);
     App.normalizeScanTransform(App.state.annotation);
+    App.normalizeReview(App.state.annotation);
     const snapshot = App.annotationSnapshot();
     if (options.silent && snapshot === App.state.lastSavedSnapshot) {
       return true;
@@ -1371,6 +1525,7 @@ const App = {
     App.renderMeasurements();
     App.renderRoiPanel();
     App.renderScanPanel();
+    App.renderManualCompletion();
     App.syncDisplayToggles();
     App.updateSummary();
     App.updateSelectedBox();
@@ -1818,6 +1973,7 @@ const App = {
       event.preventDefault();
       App.selectNextPoint();
     }
+    if (event.key.toLowerCase() === "m") App.selectNextMissingPoint();
     if (event.key === "?") App.showShortcuts();
     if (event.key.toLowerCase() === "v") App.setTool("select");
     if (event.key.toLowerCase() === "p") App.setTool("point");
@@ -1855,6 +2011,22 @@ const App = {
     const next = keys[(index + 1 + keys.length) % keys.length];
     App.selectPoint(next);
     App.state.activePointKey = next;
+  },
+
+  selectNextMissingPoint: () => {
+    const keys = App.allKeys();
+    if (!keys.length || !App.state.annotation) return;
+    const startIndex = keys.indexOf(App.state.selectedPoint);
+    for (let offset = 1; offset <= keys.length; offset += 1) {
+      const key = keys[(startIndex + offset + keys.length) % keys.length];
+      if (App.pointIsVisible(App.state.annotation.keypoints[key])) continue;
+      App.selectPoint(key);
+      App.state.activePointKey = key;
+      App.setTool("point");
+      App.setStatus("已跳到下一个缺失点");
+      return;
+    }
+    App.setStatus("当前没有缺失关键点");
   },
 
   allKeys: () => {

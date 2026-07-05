@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>22 点髋关节 X 光标注</title>
-    <link rel="stylesheet" href="/static/style.css?v=clear-points-context-1" />
+    <link rel="stylesheet" href="/static/style.css?v=manual-completion-workflow-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -127,6 +127,12 @@
               <button type="button" data-status-filter="shenton_complete">Shenton完成</button>
               <button type="button" data-status-filter="done">已完成</button>
             </div>
+            <div class="workflow-actions" role="group" aria-label="下一张待处理">
+              <button id="btnNextPending" type="button">下一张未标注</button>
+              <button id="btnNextReview" type="button">下一张待复核</button>
+              <button id="btnNextShenton" type="button">下一张 Shenton</button>
+              <button id="btnNextWarning" type="button">下一张警告</button>
+            </div>
             <small id="saveInfoText">尚未保存当前图片</small>
             <small id="importReportText">命名混乱或目录嵌套时，可先发给项目团队整理</small>
             <small id="progressReportText">状态文件会自动生成在当前文件夹中</small>
@@ -155,6 +161,11 @@
               <strong id="countMissing">22</strong>
             </div>
           </div>
+          <div class="completion-actions">
+            <button id="btnConfirmKeypoints" type="button">确认关键点完成</button>
+            <button id="btnConfirmShenton" type="button">确认 Shenton 完成</button>
+          </div>
+          <small id="manualCompletionText" class="manual-completion-text">尚未人工确认完成状态</small>
           <div class="selected-box">
             <span>选中点</span>
             <strong id="selectedLabel">-</strong>
@@ -259,6 +270,7 @@
           <span>E</span><span>增强图 / 原图</span>
           <span>D</span><span>原图识别</span>
           <span>F</span><span>适配当前图</span>
+          <span>M</span><span>跳到下一个缺失点</span>
           <span>Ctrl+S</span><span>保存</span>
           <span>← / →</span><span>上一张 / 下一张</span>
           <span>Delete</span><span>删除选中项或标记缺失</span>
@@ -269,6 +281,6 @@
       </form>
     </dialog>
 
-    <script src="/static/app.js?v=clear-points-context-1"></script>
+    <script src="/static/app.js?v=manual-completion-workflow-1"></script>
   </body>
 </html>

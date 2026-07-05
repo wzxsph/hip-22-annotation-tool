@@ -35,9 +35,10 @@ def keypoint_progress(annotation: Annotation) -> dict[str, Any]:
         visible += 1
         if point.source == "manual":
             manual += 1
-    complete = visible >= KEYPOINT_TOTAL
+    manual_confirmed = _manual_review_confirmed(annotation, "manual_keypoints_complete")
+    complete = visible >= KEYPOINT_TOTAL or manual_confirmed
     if visible == 0:
-        status = "pending"
+        status = "complete" if manual_confirmed else "pending"
     elif complete:
         status = "complete"
     elif manual > 0:
@@ -50,6 +51,7 @@ def keypoint_progress(annotation: Annotation) -> dict[str, Any]:
         "manual": manual,
         "total": KEYPOINT_TOTAL,
         "complete": complete,
+        "manual_confirmed": manual_confirmed,
     }
 
 
@@ -65,7 +67,8 @@ def shenton_progress(annotation: Annotation) -> dict[str, Any]:
         if side_progress["complete"]:
             complete_sides += 1
     total_sides = len(SIDES)
-    complete = complete_sides == total_sides
+    manual_confirmed = _manual_review_confirmed(annotation, "manual_shenton_complete")
+    complete = complete_sides == total_sides or manual_confirmed
     if complete:
         status = "complete"
     elif started_sides:
@@ -79,6 +82,7 @@ def shenton_progress(annotation: Annotation) -> dict[str, Any]:
         "started_sides": started_sides,
         "total_sides": total_sides,
         "sides": sides,
+        "manual_confirmed": manual_confirmed,
     }
 
 
@@ -123,6 +127,12 @@ def _overall_status(keypoints: dict[str, Any], shenton: dict[str, Any]) -> str:
     if keypoints["manual"] == 0 and not shenton["started_sides"]:
         return "auto"
     return "in_progress"
+
+
+def _manual_review_confirmed(annotation: Annotation, key: str) -> bool:
+    review = annotation.review if isinstance(annotation.review, dict) else {}
+    payload = review.get(key)
+    return isinstance(payload, dict) and payload.get("status") == "confirmed"
 
 
 def _clean_points(raw_points: Any) -> list[dict[str, float]]:
