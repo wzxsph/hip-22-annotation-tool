@@ -14,7 +14,7 @@ from .schema import LANDMARK_DEFS, SIDES, Keypoint, empty_keypoint, key_for, mak
 
 
 SOURCE_NAME = "pose11_side"
-DEFAULT_MODEL_NAME = "yolo11n-best.pt"
+DEFAULT_MODEL_NAME = "yolo11s-curriculum-stage2-dataset4-v2-best.pt"
 DEFAULT_CONFIDENCE = 0.25
 DEFAULT_IMGSZ = 800
 DEFAULT_MIN_VISIBLE_KEYPOINTS = 6
@@ -65,7 +65,7 @@ def estimate_keypoints_from_image(
         warnings.append(f"Ultralytics unavailable: {exc}")
         return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=False, source="model-unavailable")
     except Exception as exc:
-        warnings.append(f"yolo11n-best load failed: {exc}")
+        warnings.append(f"yolo11s-dataset4 load failed: {exc}")
         return AutoAnnotationResult(keypoints=keypoints, warnings=warnings, model_available=False, source="model-unavailable")
 
     min_visible = max(1, int(min_visible_keypoints if min_visible_keypoints is not None else _min_visible_keypoints()))
@@ -107,7 +107,7 @@ def estimate_keypoints_from_image(
                 keypoints=keypoints,
                 warnings=warnings,
                 model_available=True,
-                source="yolo11n-best-side11",
+                source="yolo11s-dataset4-side11",
                 attempts=attempts,
                 strategy=str(attempt["name"]),
             )
@@ -115,7 +115,7 @@ def estimate_keypoints_from_image(
     if best_visible > 0:
         if include_partial:
             warnings.append(
-                f"yolo11n-best returned only {best_visible} visible side11 keypoints; "
+                f"yolo11s-dataset4 returned only {best_visible} visible side11 keypoints; "
                 "using partial model result for manual review."
             )
             keypoints.update(best_decoded)
@@ -123,19 +123,19 @@ def estimate_keypoints_from_image(
                 keypoints=keypoints,
                 warnings=warnings,
                 model_available=True,
-                source="yolo11n-best-partial",
+                source="yolo11s-dataset4-partial",
                 attempts=attempts,
                 strategy=best_strategy or "partial",
             )
         else:
             warnings.append(
-                f"yolo11n-best returned only {best_visible} visible side11 keypoints; "
+                f"yolo11s-dataset4 returned only {best_visible} visible side11 keypoints; "
                 f"need at least {min_visible}, keeping blank manual template."
             )
     else:
-        warnings.append("yolo11n-best returned no visible side11 keypoints after fallback attempts.")
+        warnings.append("yolo11s-dataset4 returned no visible side11 keypoints after fallback attempts.")
     if failed_attempts and failed_attempts == len(attempts):
-        warnings.append("All yolo11n-best prediction attempts failed.")
+        warnings.append("All yolo11s-dataset4 prediction attempts failed.")
         return AutoAnnotationResult(
             keypoints=keypoints,
             warnings=warnings,
