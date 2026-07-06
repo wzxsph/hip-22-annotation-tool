@@ -16,10 +16,11 @@ STATUS_LABELS = {
     "auto": "自动初标待复核",
     "in_progress": "标注未完成",
     "keypoint_complete": "关键点完成",
+    "shenton_awaiting_confirmation": "沈通线待确认",
     "shenton_complete": "Shenton完成",
     "done": "完成",
 }
-STATUS_ORDER = ("pending", "auto", "in_progress", "keypoint_complete", "shenton_complete", "done")
+STATUS_ORDER = ("pending", "auto", "in_progress", "keypoint_complete", "shenton_awaiting_confirmation", "shenton_complete", "done")
 STATUS_MARKER_GLOB = "HIP22_STATUS_DONE_*_TODO_*.txt"
 HTML_REPORT_NAME = "HIP22_status_report.html"
 CSV_REPORT_NAME = "HIP22_status_report.csv"

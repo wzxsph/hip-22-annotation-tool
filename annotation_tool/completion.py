@@ -59,6 +59,12 @@ def _manual_keypoints_confirmed(annotation: Annotation) -> bool:
     return isinstance(manual, dict) and manual.get("status") == "confirmed"
 
 
+def _manual_shenton_confirmed(annotation: Annotation) -> bool:
+    review = annotation.review if isinstance(annotation.review, dict) else {}
+    manual = review.get("manual_shenton_complete") if isinstance(review, dict) else None
+    return isinstance(manual, dict) and manual.get("status") == "confirmed"
+
+
 def shenton_progress(annotation: Annotation) -> dict[str, Any]:
     sides: dict[str, Any] = {}
     complete_sides = 0
@@ -71,19 +77,27 @@ def shenton_progress(annotation: Annotation) -> dict[str, Any]:
         if side_progress["complete"]:
             complete_sides += 1
     total_sides = len(SIDES)
-    complete = complete_sides == total_sides
-    if complete:
+    curves_complete = complete_sides == total_sides
+    confirmed = _manual_shenton_confirmed(annotation)
+    if confirmed:
         status = "complete"
+        complete = True
+    elif curves_complete:
+        status = "awaiting_confirmation"
+        complete = False
     elif started_sides:
         status = "in_progress"
+        complete = False
     else:
         status = "pending"
+        complete = False
     return {
         "status": status,
         "complete": complete,
         "complete_sides": complete_sides,
         "started_sides": started_sides,
         "total_sides": total_sides,
+        "confirmed": confirmed,
         "sides": sides,
     }
 
@@ -128,6 +142,8 @@ def _overall_status(keypoints: dict[str, Any], shenton: dict[str, Any]) -> str:
         return "pending"
     if keypoints["status"] == "auto" and not shenton["started_sides"]:
         return "auto"
+    if shenton["status"] == "awaiting_confirmation":
+        return "shenton_awaiting_confirmation"
     return "in_progress"
 
 

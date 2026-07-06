@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>22 点髋关节 X 光标注</title>
-    <link rel="stylesheet" href="/static/style.css?v=clear-points-context-1" />
+    <link rel="stylesheet" href="/static/style.css?v=shenton-confirm-debug" />
   </head>
   <body>
     <main class="app-shell">
@@ -160,17 +160,21 @@
             <button id="btnConfirmKeypointsComplete" type="button">确认关键点完成</button>
             <small id="keypointConfirmText">关键点尚未人工确认完成</small>
           </div>
+          <div class="completion-actions">
+            <button id="btnConfirmShentonComplete" type="button">确认沈通线完成</button>
+            <small id="shentonConfirmText">沈通线尚未人工确认完成</small>
+          </div>
           <div class="selected-box">
             <span>选中点</span>
             <strong id="selectedLabel">-</strong>
             <small id="selectedCoords">-</small>
           </div>
-          <div class="measurement-box">
-            <div class="settings-title">Shenton 与测量</div>
+          <details class="measurement-box">
+            <summary>Shenton 与测量</summary>
             <div id="shentonSummaryText">尚未标注 Shenton 曲线</div>
             <div id="clinicalParameterText">关键指标：等待关键点</div>
             <small id="acetabularDepthText">髋臼深度：等待关键点；DICOM 标尺可显示毫米值</small>
-          </div>
+          </details>
           <details class="advanced-box">
             <summary>高级设置与团队导出</summary>
           <div class="settings-box">
@@ -274,6 +278,6 @@
       </form>
     </dialog>
 
-    <script src="/static/app.js?v=clear-points-context-1"></script>
+    <script src="/static/app.js?v=shenton-confirm-debug"></script>
   </body>
 </html>

@@ -39,6 +39,14 @@ def _confirm_keypoints(annotation) -> None:
     }
 
 
+def _confirm_shenton(annotation) -> None:
+    annotation.review["manual_shenton_complete"] = {
+        "status": "confirmed",
+        "updated_at": "2026-07-06T00:00:00Z",
+        "annotator": "doctor-a",
+    }
+
+
 def test_progress_reports_are_written_next_to_dataset(tmp_path):
     pending_image = tmp_path / "pending.png"
     done_image = tmp_path / "done.png"
@@ -51,6 +59,7 @@ def test_progress_reports_are_written_next_to_dataset(tmp_path):
     _fill_all_keypoints(annotation)
     _confirm_keypoints(annotation)
     _complete_shenton(annotation)
+    _confirm_shenton(annotation)
     save_annotation(annotation, tmp_path)
     upsert_manifest_image(done_image, annotation=annotation, root=tmp_path)
 
@@ -103,7 +112,7 @@ def test_confirmed_keypoints_without_shenton_are_keypoint_complete(tmp_path):
     assert payload["counts"]["needs_review"] == 1
 
 
-def test_complete_shenton_without_keypoints_is_shenton_complete(tmp_path):
+def test_complete_shenton_without_keypoints_is_shenton_awaiting_confirmation(tmp_path):
     image_path = tmp_path / "case.png"
     _write_image(image_path)
     annotation = create_blank_annotation("case.png", 80, 60, annotator="doctor-a")
@@ -114,10 +123,10 @@ def test_complete_shenton_without_keypoints_is_shenton_complete(tmp_path):
     rows = build_progress_rows(tmp_path, manifest)
     payload = build_progress_payload(tmp_path, manifest)
 
-    assert rows[0]["status"] == "shenton_complete"
+    assert rows[0]["status"] == "shenton_awaiting_confirmation"
     assert rows[0]["keypoint_status"] == "pending"
-    assert rows[0]["shenton_status"] == "complete"
-    assert payload["counts"]["shenton_complete"] == 1
+    assert rows[0]["shenton_status"] == "awaiting_confirmation"
+    assert payload["counts"]["shenton_awaiting_confirmation"] == 1
     assert payload["counts"]["needs_review"] == 1
 
 

@@ -557,8 +557,26 @@ button.danger:hover {
 }
 
 .measurement-box {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  margin-bottom: 14px;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.measurement-box summary {
+  min-height: 36px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.measurement-box > :not(summary) {
+  border-top: 1px solid var(--line);
+  padding: 8px 10px;
 }
 
 .measurement-box small {

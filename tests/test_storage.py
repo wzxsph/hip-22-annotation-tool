@@ -85,6 +85,12 @@ def test_annotation_status_requires_keypoints_and_shenton():
         ]
         annotation.shenton_review[side]["status"] = "continuous"
 
+    assert annotation_status(annotation) == "keypoint_complete"
+    annotation.review["manual_shenton_complete"] = {
+        "status": "confirmed",
+        "updated_at": "2026-07-06T00:00:00Z",
+        "annotator": "doctor-a",
+    }
     assert annotation_status(annotation) == "done"
 
 
@@ -103,6 +109,12 @@ def test_annotation_status_can_mark_shenton_complete_before_keypoints():
         ]
         annotation.shenton_review[side]["status"] = "continuous"
 
+    assert annotation_status(annotation) == "shenton_awaiting_confirmation"
+    annotation.review["manual_shenton_complete"] = {
+        "status": "confirmed",
+        "updated_at": "2026-07-06T00:00:00Z",
+        "annotator": "doctor-a",
+    }
     assert annotation_status(annotation) == "shenton_complete"
 
 

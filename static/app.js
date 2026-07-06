@@ -150,6 +150,7 @@ const App = {
     document.getElementById("btnClearPoints").addEventListener("click", App.clearCurrentImagePoints);
     document.getElementById("btnDeleteImage").addEventListener("click", App.deleteCurrentImage);
     document.getElementById("btnConfirmKeypointsComplete").addEventListener("click", App.confirmKeypointsComplete);
+    document.getElementById("btnConfirmShentonComplete").addEventListener("click", App.confirmShentonComplete);
     document.getElementById("btnAutoDetect").addEventListener("click", App.handleAutoDetectCurrent);
     document.getElementById("btnAutoDetectEnhanced").addEventListener("click", () => App.handleAutoDetectCurrent({ useEnhanced: true }));
     document.getElementById("btnShortcutHelp").addEventListener("click", App.showShortcuts);
@@ -493,6 +494,7 @@ const App = {
       auto: 0,
       in_progress: 0,
       keypoint_complete: 0,
+      shenton_awaiting_confirmation: 0,
       shenton_complete: 0,
       done: 0,
       needs_review: 0,
@@ -500,10 +502,10 @@ const App = {
       shenton_complete_total: 0,
     };
     (App.state.manifestImages || []).forEach((item) => {
-      const status = ["pending", "auto", "in_progress", "keypoint_complete", "shenton_complete", "done"].includes(item.status)
+      const status = ["pending", "auto", "in_progress", "keypoint_complete", "shenton_awaiting_confirmation", "shenton_complete", "done"].includes(item.status)
         ? item.status
         : "pending";
-      counts[status] += 1;
+      counts[status] = (counts[status] || 0) + 1;
       counts.total += 1;
       if (item.keypoint_status === "complete") counts.keypoints_complete_total += 1;
       if (item.shenton_status === "complete") counts.shenton_complete_total += 1;
@@ -660,9 +662,9 @@ const App = {
   updateManifestEntryStatus: (filename, progressOrStatus) => {
     const progress = typeof progressOrStatus === "string" ? { status: progressOrStatus } : progressOrStatus || {};
     const status = progress.status;
-    if (!filename || !status) return;
+    if (!filename || !status) { console.log("updateManifestEntryStatus: missing filename or status", { filename, status }); return; }
     const item = App.state.manifestByFilename.get(filename);
-    if (!item) return;
+    if (!item) { console.log("updateManifestEntryStatus: item not found for", filename, "keys:", [...App.state.manifestByFilename.keys()]); return; }
     item.status = status;
     item.keypoint_status = progress.keypoint_status || item.keypoint_status || "pending";
     item.shenton_status = progress.shenton_status || item.shenton_status || "pending";
@@ -854,6 +856,54 @@ const App = {
     App.refreshAll();
     const saved = await App.saveAnnotation();
     App.setStatus(saved ? "已确认关键点完成" : "关键点确认保存失败");
+  },
+
+  shentonConfirmed: () => {
+    const review = App.state.annotation?.review || {};
+    return review.manual_shenton_complete?.status === "confirmed";
+  },
+
+  confirmShentonComplete: async () => {
+    if (!App.state.annotation) {
+      App.setStatus("请先打开一张图片");
+      return;
+    }
+    const shenton = App.state.annotation.shenton_curves || {};
+    const review = App.state.annotation.shenton_review || {};
+    const sides = ["left", "right"];
+    let completeSides = 0;
+    for (const side of sides) {
+      const curves = shenton[side] || {};
+      let curvesOk = true;
+      for (const seg of ["obturator_upper_curve", "femoral_neck_inner_lower_curve"]) {
+        if ((curves[seg]?.points || []).length < 3) {
+          curvesOk = false;
+          break;
+        }
+      }
+      const sideReview = review[side]?.status || "not_reviewed";
+      const sideReviewed = ["continuous", "discontinuous", "uncertain"].includes(sideReview);
+      if (curvesOk && sideReviewed) completeSides += 1;
+    }
+    const missing = Math.max(0, 2 - completeSides);
+    const message =
+      missing > 0
+        ? `当前还有 ${missing} 侧沈通线未完成。\n\n仍要人工确认本图沈通线已完成吗？`
+        : "确认本图沈通线已经人工复核完成吗？";
+    if (!window.confirm(message)) return;
+    App.pushHistory();
+    App.state.annotation.review = App.state.annotation.review || {};
+    App.state.annotation.review.manual_shenton_complete = {
+      status: "confirmed",
+      complete_sides: completeSides,
+      updated_at: new Date().toISOString(),
+      annotator: document.getElementById("annotatorInput")?.value?.trim() || "default",
+    };
+    App.refreshAll();
+    console.log("confirmShentonComplete: saving annotation with review", JSON.stringify(App.state.annotation.review));
+    const saved = await App.saveAnnotation();
+    console.log("confirmShentonComplete: save returned", saved, "manifest entry:", App.state.manifestByFilename.get(App.state.annotation?.image?.filename));
+    App.setStatus(saved ? "已确认沈通线完成" : "沈通线确认保存失败");
   },
 
   scrollActiveThumbnailIntoView: () => {
@@ -1361,6 +1411,7 @@ const App = {
         body: JSON.stringify(App.annotationPayloadForSave()),
       });
       const payload = await App.readJsonResponse(res, "save failed");
+      console.log("saveAnnotation: server response", { status: payload.annotation_status, progress: payload.annotation_progress });
       if (payload.measurements_snapshot) {
         App.state.annotation.measurements_snapshot = payload.measurements_snapshot;
         App.renderMeasurements();
@@ -1445,6 +1496,7 @@ const App = {
     App.syncDisplayToggles();
     App.updateSummary();
     App.renderKeypointConfirmation();
+    App.renderShentonConfirmation();
     App.updateSelectedBox();
   },
 
@@ -2591,6 +2643,39 @@ const App = {
     }
     const visible = App.visibleKeypointCount();
     text.textContent = visible >= 22 ? "22 个关键点已齐，等待人工确认完成" : `已标 ${visible}/22，未完成`;
+  },
+
+  renderShentonConfirmation: () => {
+    const text = document.getElementById("shentonConfirmText");
+    const button = document.getElementById("btnConfirmShentonComplete");
+    if (!text || !button) return;
+    if (!App.state.annotation) {
+      text.textContent = "沈通线尚未人工确认完成";
+      button.disabled = true;
+      return;
+    }
+    button.disabled = false;
+    const confirmed = App.shentonConfirmed();
+    if (confirmed) {
+      const meta = App.state.annotation.review?.manual_shenton_complete || {};
+      const annotator = meta.annotator || "default";
+      const timeText = meta.updated_at ? new Date(meta.updated_at).toLocaleString() : "";
+      text.textContent = `已由 ${annotator} 确认沈通线完成${timeText ? `（${timeText}）` : ""}`;
+      return;
+    }
+    const shenton = App.state.annotation.shenton_curves || {};
+    const review = App.state.annotation.shenton_review || {};
+    let completeSides = 0;
+    for (const side of ["left", "right"]) {
+      const curves = shenton[side] || {};
+      let curvesOk = true;
+      for (const seg of ["obturator_upper_curve", "femoral_neck_inner_lower_curve"]) {
+        if ((curves[seg]?.points || []).length < 3) { curvesOk = false; break; }
+      }
+      const sideReview = review[side]?.status || "not_reviewed";
+      if (curvesOk && ["continuous", "discontinuous", "uncertain"].includes(sideReview)) completeSides += 1;
+    }
+    text.textContent = completeSides >= 2 ? "两侧沈通线已标注，等待人工确认完成" : `沈通线 ${completeSides}/2 侧完成`;
   },
 
   updateSelectedBox: () => {
