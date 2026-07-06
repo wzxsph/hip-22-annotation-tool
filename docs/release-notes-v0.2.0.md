@@ -18,8 +18,6 @@ This prerelease adds DICOM import, enhanced X-ray preview, reduced default line 
 - Hides default 22-point guide connections by default, with toggles for default lines, manual lines, Shenton curves, measurement lines, and point numbers.
 - Adds Shenton curve annotation for left/right obturator upper curve and femoral-neck inner-lower curve, with at least 3 points per segment and no hard upper limit.
 - Adds Shenton measurement snapshot: endpoint gap, optional mm distances, and warnings.
-- Adds manual completion confirmation for keypoints and Shenton when valid images contain unmarkable structures; confirmation prompts warn about incomplete points or curves.
-- Adds next-image workflow buttons for pending, review-needed, Shenton-incomplete, and quality-warning cases, plus `M` to jump to the next missing keypoint.
 - Adds live research-aid measurements from the current 22 points: AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, and acetabular depth. Acetabular depth is shown in millimeters when valid DICOM PixelSpacing is available.
 - Adds `scripts/export_shenton_training_set.py` for internal JSONL and YOLO pose training export.
 - Adds `scripts/prepare_scan_like_images.py` for internal local preparation of scan-like enhanced images from phone-shot folders.

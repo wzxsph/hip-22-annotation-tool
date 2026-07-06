@@ -523,27 +523,6 @@ button:hover,
   border-color: var(--accent);
 }
 
-.workflow-actions,
-.completion-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.workflow-actions button,
-.completion-actions button {
-  min-height: 30px;
-  padding: 0 8px;
-  font-size: 12px;
-}
-
-.manual-completion-text {
-  display: block;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
 .summary-grid span,
 .selected-box span,
 .selected-box small,
