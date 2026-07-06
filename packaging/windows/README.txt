@@ -37,4 +37,4 @@ Hip 22 Annotation Tool - 髋关节 X 光标注工具
 
 版本
 ----
-{VERSION}
+v0.3.0
