@@ -13,13 +13,11 @@ This project is a research annotation aid. It is not a medical device, does not 
 - Supports common image files plus single-frame grayscale DICOM (`.dcm`, `.dicom`, and extensionless DICOM with a valid header).
 - Renders DICOM to Canvas without writing derived PNG files into the submitted folder, and stores PixelSpacing metadata without PHI fields.
 - Preserves existing JSON or YOLO sidecar labels and never overwrites reviewed annotations during auto-detection.
-- Uses the bundled `models/yolo11n-best.pt` weight by default for model-assisted initialization.
+- Uses the bundled `models/yolo11s-curriculum-stage2-dataset4-v2-best.pt` weight by default for model-assisted initialization.
 - Provides an `Auto Detect` button for retrying the current image without discarding manual corrections.
 - Provides an enhanced preview and enhanced auto-detect retry based on the hip_demo-style X-ray contrast pipeline.
 - Opens images in enhanced view by default, with a one-click original-image comparison.
 - Caches enhanced/DICOM display PNGs under local app data so repeated image switching does not recompute enhancement every time.
-- Keeps model-missing landmarks explicitly missing when auto-detection is incomplete or unavailable, so reviewers can manually place only verified points.
-- Requires a reviewer to explicitly confirm keypoints complete; 22 model-detected points are treated as review-ready, not complete.
 - Supports a non-destructive ROI crop box for cluttered-background images; recognition can retry inside the ROI while saved coordinates remain in the original image coordinate system.
 - Supports a four-corner scan-like transform for phone-shot X-rays; current-image recognition can run on the perspective-corrected view and map points back to original coordinates.
 - Writes visible workspace progress files so a folder can show which images are unfinished, auto-initialized, in progress, or complete.
@@ -27,7 +25,7 @@ This project is a research annotation aid. It is not a medical device, does not 
 - Saves YOLO Pose sidecar labels to `<image_stem>.txt` beside each image.
 - Supports zoom, pan, drag-to-correct, missing-point marking, undo/redo, manual connections, Shenton curve collection, and keyboard image navigation.
 
-The bundled yolo11n-best weight is trained from manually created research annotations on MTDDH-derived images by a non-medical annotator; users should review and correct all outputs before use.
+The bundled yolo11s weight is trained from manually created research annotations on MTDDH-derived images by a non-medical annotator; users should review and correct all outputs before use.
 
 ## Demo Screenshots
 
@@ -41,7 +39,7 @@ Demo screenshots use pelvic X-ray examples derived from the MTDDH dataset, licen
 
 Hospital users should download the Windows CPU ZIP from [GitHub Releases](https://github.com/wzxsph/hip-22-annotation-tool/releases), unzip it locally, and run `Hip22AnnotationTool.exe` or `Run-Hip22.bat`.
 
-Do not use GitHub's `Code > Download ZIP` for hospital delivery. GitHub source ZIP downloads do not reliably include Git LFS model binaries, so `models/yolo11n-best.pt` may be missing or replaced by a small pointer file. In that state the app can still open, but model-assisted initialization will report that the model is unavailable.
+Do not use GitHub's `Code > Download ZIP` for hospital delivery. GitHub source ZIP downloads do not reliably include Git LFS model binaries, so `models/yolo11s-curriculum-stage2-dataset4-v2-best.pt` may be missing or replaced by a small pointer file. In that state the app can still open, but model-assisted initialization will report that the model is unavailable.
 
 For developers cloning the repository, install Git LFS before or immediately after cloning:
 
@@ -52,7 +50,7 @@ cd hip-22-annotation-tool
 git lfs pull
 ```
 
-To verify that the model is present, `models/yolo11n-best.pt` should be a large binary file, not a tiny text file beginning with `version https://git-lfs.github.com/spec/v1`.
+To verify that the model is present, `models/yolo11s-curriculum-stage2-dataset4-v2-best.pt` should be a large binary file, not a tiny text file beginning with `version https://git-lfs.github.com/spec/v1`.
 
 ## Install
 
@@ -99,7 +97,7 @@ Share only the ZIP after the smoke test passes. See:
 Default model path:
 
 ```text
-models/yolo11n-best.pt
+models/yolo11s-curriculum-stage2-dataset4-v2-best.pt
 ```
 
 You can override it:
@@ -119,7 +117,7 @@ If the model file is missing or `ultralytics` is unavailable, the tool still ope
 
 ## DICOM, Enhanced Preview, And Shenton Prototype
 
-Version 0.2.0 adds prerelease research support for DICOM and Shenton curve collection:
+Version 0.3.0 adds manual confirmation workflows, default guide connections, and an updated model:
 
 - DICOM import reads `PixelSpacing` / `ImagerPixelSpacing`, applies rescale slope/intercept, window center/width, and `MONOCHROME1` inversion. Unsupported compressed/private formats are reported as warnings instead of stopping the whole folder import.
 - The annotation JSON stores non-PHI image metadata only: `source_format`, pixel spacing fields, spacing source, and DICOM warnings. It does not store `PatientName`, `PatientID`, `AccessionNumber`, or similar identifiers.
@@ -128,7 +126,9 @@ Version 0.2.0 adds prerelease research support for DICOM and Shenton curve colle
 - If a reviewer draws an ROI crop, current-image auto-detect retries inside that ROI and maps detected points back to the original image coordinates.
 - If a reviewer marks four scan corners, current-image auto-detect first warps the image into a scan-like view, then maps detected points back to the original image coordinates. This is intended for phone-shot images with visible film borders.
 - If model output is unavailable or incomplete, missing points remain missing. The tool no longer fills absent model output with template guesses.
-- Default 22-point guide connections are hidden by default to reduce occlusion. Manual connections, Shenton curves, measurement lines, and point labels each have separate display toggles.
+- 14 predefined anatomical guide connections (acetabular, femoral head, femoral shaft, cross-midline) are shown by default in light red. Default connections, manual connections, Shenton curves, measurement lines, and point labels each have separate display toggles.
+- Manual keypoint confirmation: reviewers must explicitly click "确认关键点完成" before keypoints count as complete; 22 model-detected points are treated as review-ready (`auto`), not complete.
+- Manual Shenton confirmation: a matching "确认沈通线完成" button requires explicit reviewer sign-off for Shenton curves. Shenton & Measurement panel is collapsed by default.
 - The Shenton tool lets a reviewer mark left/right obturator upper curve and femoral-neck inner-lower curve with at least 3 points per segment; more points are allowed for curve fitting. The reviewer records `continuous`, `discontinuous`, or `uncertain`. The tool no longer asks reviewers to mark an extension intersection; legacy intersection fields are read for compatibility only and are ignored by training export. Measurements are research aids only, not clinical conclusions.
 - `/api/annotation/measurements/compute` returns Shenton endpoint `gap_px`, optional `gap_mm`, AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, acetabular depth, and warnings. Acetabular depth is shown in mm when DICOM PixelSpacing is available.
 
