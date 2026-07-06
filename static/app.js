@@ -148,6 +148,7 @@ const App = {
     document.getElementById("annotatorInput").addEventListener("change", App.saveSettings);
     document.getElementById("btnSave").addEventListener("click", () => App.saveAnnotation());
     document.getElementById("btnClearPoints").addEventListener("click", App.clearCurrentImagePoints);
+    document.getElementById("btnDeleteImage").addEventListener("click", App.deleteCurrentImage);
     document.getElementById("btnAutoDetect").addEventListener("click", App.handleAutoDetectCurrent);
     document.getElementById("btnAutoDetectEnhanced").addEventListener("click", () => App.handleAutoDetectCurrent({ useEnhanced: true }));
     document.getElementById("btnShortcutHelp").addEventListener("click", App.showShortcuts);
@@ -782,6 +783,44 @@ const App = {
       await App.loadByName(filename, { skipManifest: true });
     } finally {
       App.state.isNavigating = false;
+    }
+  },
+
+  deleteCurrentImage: async () => {
+    const filename = App.state.currentFilename;
+    if (!filename) {
+      App.setStatus("请先打开一张图片");
+      return;
+    }
+    const confirmed = window.confirm(
+      `确认从当前文件夹中删除这张图片吗？\n\n${filename}\n\n会同时删除同名标注 JSON、YOLO txt 和缓存预览。此操作不可撤销。`,
+    );
+    if (!confirmed) return;
+
+    const imagesBeforeDelete = App.state.manifestImages || [];
+    const currentIndex = App.currentManifestIndex();
+    App.setStatus("正在删除当前图片...");
+    try {
+      const res = await fetch(`/api/annotation/image/${encodeURIComponent(filename)}`, { method: "DELETE" });
+      await App.readJsonResponse(res, "delete image failed");
+      await App.loadManifest();
+      const remaining = App.state.manifestImages || imagesBeforeDelete.filter((item) => App.imageFilename(item) !== filename);
+      const nextItem = remaining[Math.min(Math.max(currentIndex, 0), Math.max(remaining.length - 1, 0))];
+      App.state.annotation = null;
+      App.state.currentFilename = null;
+      App.state.image = null;
+      App.state.imageBaseUrl = "";
+      App.state.lastSave = null;
+      App.state.lastSavedSnapshot = "";
+      if (nextItem) {
+        await App.loadByName(App.imageFilename(nextItem), { skipManifest: true });
+        App.setStatus("已删除当前图片，并打开下一张");
+      } else {
+        App.clearWorkspaceView("已删除当前图片，当前文件夹没有更多图片");
+        await App.loadManifest();
+      }
+    } catch (err) {
+      App.setStatus(`删除失败: ${err.message}`);
     }
   },
 

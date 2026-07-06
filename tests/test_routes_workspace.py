@@ -8,7 +8,7 @@ from annotation_tool import auto_detection as auto_detection_module
 from annotation_tool.heuristics import AutoAnnotationResult
 from annotation_tool.schema import create_blank_annotation, make_keypoint
 from annotation_tool.server import app
-from annotation_tool.storage import annotation_path, load_annotation, load_settings, save_annotation, save_settings, upsert_manifest_image
+from annotation_tool.storage import annotation_path, load_annotation, load_manifest, load_settings, save_annotation, save_settings, upsert_manifest_image
 from annotation_tool.yolo_export import annotation_to_yolo_text
 from conftest import write_test_dicom
 
@@ -72,6 +72,38 @@ def test_open_folder_marks_full_keypoints_without_shenton_as_keypoint_complete(t
         assert listed["progress"]["counts"]["done"] == 0
         assert listed["progress"]["counts"]["keypoint_complete"] == 1
         assert listed["progress"]["counts"]["needs_review"] == 1
+    finally:
+        save_settings(old_settings)
+
+
+def test_delete_image_removes_files_and_manifest_entry(tmp_path):
+    old_settings = load_settings()
+    client = TestClient(app)
+    workspace = tmp_path / "workspace"
+    image_dir = workspace / "images" / "train"
+    image_dir.mkdir(parents=True)
+    image_path = image_dir / "case.png"
+    _write_image(image_path)
+    annotation = create_blank_annotation("case.png", 80, 60, annotator="doctor-a")
+    root_legacy_json = workspace / "case.json"
+    root_legacy_json.write_text(annotation.model_dump_json() if hasattr(annotation, "model_dump_json") else annotation.json(), encoding="utf-8")
+    save_annotation(annotation, workspace)
+    upsert_manifest_image(image_path, annotation=annotation, root=workspace)
+    root_sidecar = workspace / "case.txt"
+    root_sidecar.write_text("sidecar", encoding="utf-8")
+    try:
+        save_settings({"dataset_root": str(workspace), "auto_detect": False})
+
+        res = client.delete("/api/annotation/image/case.png")
+
+        assert res.status_code == 200
+        assert res.json()["filename"] == "case.png"
+        assert not image_path.exists()
+        assert not annotation_path("case.png", workspace).exists()
+        assert not root_legacy_json.exists()
+        assert not image_path.with_suffix(".txt").exists()
+        assert not root_sidecar.exists()
+        assert load_manifest(workspace).images == []
     finally:
         save_settings(old_settings)
 

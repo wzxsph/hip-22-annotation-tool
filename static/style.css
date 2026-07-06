@@ -74,6 +74,17 @@ button:hover,
   color: white;
 }
 
+button.danger {
+  border-color: rgba(201, 42, 42, 0.45);
+  color: var(--danger);
+}
+
+button.danger:hover {
+  background: #fff5f5;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .app-shell {
   height: 100vh;
   display: grid;

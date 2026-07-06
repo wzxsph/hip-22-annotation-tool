@@ -22,7 +22,7 @@ from .dicom_utils import is_dicom_path
 from .image_io import is_supported_image_path, read_supported_image
 from .measurements import compute_measurements
 from .progress_report import build_progress_payload_from_manifest
-from .render_cache import cached_rendered_png, cached_thumbnail_jpeg
+from .render_cache import cached_rendered_png, cached_thumbnail_jpeg, rendered_png_cache_path, thumbnail_cache_path
 from .schema import LANDMARK_DEFS, Annotation, Manifest, create_blank_annotation, ensure_keypoint_template, model_to_dict, normalize_split
 from .storage import (
     annotation_path,
@@ -32,6 +32,7 @@ from .storage import (
     ensure_dataset_layout,
     find_annotation_path,
     find_image_path,
+    annotation_path_candidates,
     image_path_for,
     load_annotation,
     load_annotation_from_path,
@@ -803,6 +804,56 @@ async def save_annotation_data(annotation: Annotation, skip_manifest: bool = Fal
     if not skip_manifest:
         payload["progress"] = build_progress_payload_from_manifest(load_manifest(root))
     return payload
+
+
+@router.delete("/image/{image_filename:path}")
+async def delete_image(image_filename: str):
+    filename = _safe_filename(image_filename)
+    root = current_root()
+    image_path = find_image_path(filename, root)
+    if image_path is None or not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    deleted: list[str] = []
+    for cache_path in (
+        rendered_png_cache_path(image_path, enhanced=False),
+        rendered_png_cache_path(image_path, enhanced=True),
+        thumbnail_cache_path(image_path),
+    ):
+        if cache_path.exists():
+            cache_path.unlink()
+            deleted.append(str(cache_path))
+
+    candidates = {
+        image_path,
+        annotation_path(filename, root),
+        image_path.with_suffix(".json"),
+        label_path(filename, root, _split_from_image_path(image_path)),
+        image_path.with_suffix(".txt"),
+        root / f"{image_path.stem}.txt",
+    }
+    candidates.update(annotation_path_candidates(filename, root, image_path))
+
+    for candidate in sorted(candidates, key=lambda item: str(item)):
+        if candidate.exists() and candidate.is_file():
+            candidate.unlink()
+            deleted.append(str(candidate))
+
+    manifest = load_manifest(root)
+    image_id = image_path.stem
+    manifest.images = [
+        item
+        for item in manifest.images
+        if item.id != image_id and Path(item.image_path).name != filename
+    ]
+    save_manifest(manifest, root)
+
+    return {
+        "status": "success",
+        "filename": filename,
+        "deleted": deleted,
+        "progress": build_progress_payload_from_manifest(manifest),
+    }
 
 
 @router.post("/auto-detect-image")
