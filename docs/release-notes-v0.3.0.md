@@ -3,8 +3,7 @@
 Label: non-production ready
 
 This release adds manual completion confirmation for keypoints and Shenton lines, 14 default
-anatomical guide connections, disables template fallback for missing model points, and updates
-the default model to yolo11s dataset4 v2.
+anatomical guide connections, and disables template fallback for missing model points.
 
 ## Highlights
 
@@ -20,7 +19,6 @@ the default model to yolo11s dataset4 v2.
 - **Template fallback disabled.** When model output is unavailable or incomplete, missing landmarks
   stay explicitly missing (`visible=False`, `source="missing"`) instead of being filled with
   draggable template guesses. Reviewers must manually place only verified points.
-- **Updated default model.** Changed from yolo11n-best to yolo11s-curriculum-stage2-dataset4-v2-best.
 - **New `shenton_awaiting_confirmation` status.** Shenton curves that are fully drawn and reviewed
   on both sides but not yet confirmed by the reviewer show as a distinct filter state.
 
@@ -57,8 +55,6 @@ the default model to yolo11s dataset4 v2.
   for `complete` / `done` status. Annotations without these fields default to not-complete.
 - The `auto_initialization.template_fallback` field now writes `enabled: false` with a
   compatibility note instead of filling points.
-- Default model changed from yolo11n-best.pt to yolo11s-curriculum-stage2-dataset4-v2-best.pt.
-  Set `HIP22_MODEL_PATH` to override.
 
 ## Verification
 

@@ -13,7 +13,7 @@ This project is a research annotation aid. It is not a medical device, does not 
 - Supports common image files plus single-frame grayscale DICOM (`.dcm`, `.dicom`, and extensionless DICOM with a valid header).
 - Renders DICOM to Canvas without writing derived PNG files into the submitted folder, and stores PixelSpacing metadata without PHI fields.
 - Preserves existing JSON or YOLO sidecar labels and never overwrites reviewed annotations during auto-detection.
-- Uses the bundled `models/yolo11s-curriculum-stage2-dataset4-v2-best.pt` weight by default for model-assisted initialization.
+- Uses the bundled `models/yolo11n-best.pt` weight by default for model-assisted initialization.
 - Provides an `Auto Detect` button for retrying the current image without discarding manual corrections.
 - Provides an enhanced preview and enhanced auto-detect retry based on the hip_demo-style X-ray contrast pipeline.
 - Opens images in enhanced view by default, with a one-click original-image comparison.
@@ -25,7 +25,7 @@ This project is a research annotation aid. It is not a medical device, does not 
 - Saves YOLO Pose sidecar labels to `<image_stem>.txt` beside each image.
 - Supports zoom, pan, drag-to-correct, missing-point marking, undo/redo, manual connections, Shenton curve collection, and keyboard image navigation.
 
-The bundled yolo11s weight is trained from manually created research annotations on MTDDH-derived images by a non-medical annotator; users should review and correct all outputs before use.
+The bundled yolo11n-best weight is trained from manually created research annotations on MTDDH-derived images by a non-medical annotator; users should review and correct all outputs before use.
 
 ## Demo Screenshots
 
@@ -39,7 +39,7 @@ Demo screenshots use pelvic X-ray examples derived from the MTDDH dataset, licen
 
 Hospital users should download the Windows CPU ZIP from [GitHub Releases](https://github.com/wzxsph/hip-22-annotation-tool/releases), unzip it locally, and run `Hip22AnnotationTool.exe` or `Run-Hip22.bat`.
 
-Do not use GitHub's `Code > Download ZIP` for hospital delivery. GitHub source ZIP downloads do not reliably include Git LFS model binaries, so `models/yolo11s-curriculum-stage2-dataset4-v2-best.pt` may be missing or replaced by a small pointer file. In that state the app can still open, but model-assisted initialization will report that the model is unavailable.
+Do not use GitHub's `Code > Download ZIP` for hospital delivery. GitHub source ZIP downloads do not reliably include Git LFS model binaries, so `models/yolo11n-best.pt` may be missing or replaced by a small pointer file. In that state the app can still open, but model-assisted initialization will report that the model is unavailable.
 
 For developers cloning the repository, install Git LFS before or immediately after cloning:
 
@@ -50,7 +50,7 @@ cd hip-22-annotation-tool
 git lfs pull
 ```
 
-To verify that the model is present, `models/yolo11s-curriculum-stage2-dataset4-v2-best.pt` should be a large binary file, not a tiny text file beginning with `version https://git-lfs.github.com/spec/v1`.
+To verify that the model is present, `models/yolo11n-best.pt` should be a large binary file, not a tiny text file beginning with `version https://git-lfs.github.com/spec/v1`.
 
 ## Install
 
@@ -97,7 +97,7 @@ Share only the ZIP after the smoke test passes. See:
 Default model path:
 
 ```text
-models/yolo11s-curriculum-stage2-dataset4-v2-best.pt
+models/yolo11n-best.pt
 ```
 
 You can override it:
@@ -117,7 +117,7 @@ If the model file is missing or `ultralytics` is unavailable, the tool still ope
 
 ## DICOM, Enhanced Preview, And Shenton Prototype
 
-Version 0.3.0 adds manual confirmation workflows, default guide connections, and an updated model:
+Version 0.3.0 adds manual confirmation workflows and default guide connections:
 
 - DICOM import reads `PixelSpacing` / `ImagerPixelSpacing`, applies rescale slope/intercept, window center/width, and `MONOCHROME1` inversion. Unsupported compressed/private formats are reported as warnings instead of stopping the whole folder import.
 - The annotation JSON stores non-PHI image metadata only: `source_format`, pixel spacing fields, spacing source, and DICOM warnings. It does not store `PatientName`, `PatientID`, `AccessionNumber`, or similar identifiers.
