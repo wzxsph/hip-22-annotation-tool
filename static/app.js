@@ -46,7 +46,7 @@ const App = {
     dragStarted: false,
     spaceHeld: false,
     showLabels: true,
-    showDefaultConnections: false,
+    showDefaultConnections: true,
     showManualConnections: true,
     showShenton: true,
     showMeasurements: true,
@@ -1013,8 +1013,49 @@ const App = {
     App.loadByName(App.state.currentFilename, { skipManifest: true });
   },
 
+  DEFAULT_CONNECTION_PAIRS: [
+    ["left_femoral_shaft_prox", "left_femoral_shaft_dist"],
+    ["left_femoral_head_medial", "left_femoral_head_center"],
+    ["left_femoral_head_center", "left_femoral_head_lateral"],
+    ["left_femoral_head_center", "left_femoral_neck_axis_center"],
+    ["left_acetabular_outer", "left_triradiate_center"],
+    ["left_acetabular_outer", "left_teardrop_lower"],
+    ["right_femoral_shaft_prox", "right_femoral_shaft_dist"],
+    ["right_femoral_head_medial", "right_femoral_head_center"],
+    ["right_femoral_head_center", "right_femoral_head_lateral"],
+    ["right_femoral_head_center", "right_femoral_neck_axis_center"],
+    ["right_acetabular_outer", "right_triradiate_center"],
+    ["right_acetabular_outer", "right_teardrop_lower"],
+    ["left_triradiate_center", "right_triradiate_center"],
+    ["left_teardrop_lower", "right_teardrop_lower"],
+  ],
+
+  ensureDefaultConnections: (annotation) => {
+    const manual = (annotation.connections || []).filter((c) => c.source !== "default");
+    const existingDefaultPairs = new Set(
+      (annotation.connections || []).filter((c) => c.source === "default").map((c) => `${c.point_a}__${c.point_b}`)
+    );
+    const defaults = App.DEFAULT_CONNECTION_PAIRS.map(([a, b]) => {
+      const old = (annotation.connections || []).find(
+        (c) => c.source === "default" && c.point_a === a && c.point_b === b
+      );
+      return {
+        id: old?.id || `default_${a}__${b}`,
+        point_a: a,
+        point_b: b,
+        label: "默认连线",
+        source: "default",
+        visible: true,
+        updated_at: old?.updated_at || new Date().toISOString(),
+        annotator: "",
+      };
+    });
+    annotation.connections = [...manual, ...defaults];
+  },
+
   applyAnnotation: (annotation) => {
     annotation.connections = Array.isArray(annotation.connections) ? annotation.connections : [];
+    App.ensureDefaultConnections(annotation);
     App.normalizeShenton(annotation);
     App.normalizeRoiCrop(annotation);
     App.normalizeScanTransform(annotation);
@@ -2543,7 +2584,7 @@ const App = {
   connectionColor: (connection) => {
     if (connection.source === "manual") return "#ffd43b";
     if (connection.label && connection.label.includes("图像左")) return "#63e6be";
-    return "#74c0fc";
+    return "#ff8a8a";
   },
 
   sourceColor: (source) => {
