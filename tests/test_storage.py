@@ -64,6 +64,12 @@ def test_annotation_status_requires_keypoints_and_shenton():
     for point in annotation.keypoints.values():
         annotation.keypoints[point.id] = make_keypoint(point.side, point.name, 10, 10, source="manual", confidence=1)
 
+    assert annotation_status(annotation) == "in_progress"
+    annotation.review["manual_keypoints_complete"] = {
+        "status": "confirmed",
+        "updated_at": "2026-07-06T00:00:00Z",
+        "annotator": "doctor-a",
+    }
     assert annotation_status(annotation) == "keypoint_complete"
 
     for side in ("left", "right"):

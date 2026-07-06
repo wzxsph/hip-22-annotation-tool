@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
-
-from .schema import Annotation, Keypoint, make_keypoint
+from .schema import Keypoint, make_keypoint
 
 
 TEMPLATE_VERSION = "demo-median-2026-07-05"
@@ -59,30 +57,3 @@ def template_keypoints_for_image(width: int | float, height: int | float, *, ann
     return keypoints
 
 
-def apply_template_fallback(
-    annotation: Annotation,
-    *,
-    reason: str,
-    model_visible_count: int,
-) -> dict[str, Any]:
-    template = template_keypoints_for_image(
-        annotation.image.width,
-        annotation.image.height,
-        annotator=annotation.annotator.user_id if annotation.annotator else "",
-    )
-    filled = 0
-    for key, template_point in template.items():
-        current = annotation.keypoints.get(key)
-        if current is not None and current.visible and current.x is not None and current.y is not None:
-            continue
-        annotation.keypoints[key] = template_point
-        filled += 1
-    return {
-        "enabled": filled > 0,
-        "template_version": TEMPLATE_VERSION,
-        "source": TEMPLATE_SOURCE,
-        "filled_count": filled,
-        "reason": reason,
-        "model_visible_count": int(model_visible_count),
-        "note": "Template points are only draggable starting positions and require doctor review.",
-    }

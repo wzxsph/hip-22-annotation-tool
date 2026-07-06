@@ -149,6 +149,7 @@ const App = {
     document.getElementById("btnSave").addEventListener("click", () => App.saveAnnotation());
     document.getElementById("btnClearPoints").addEventListener("click", App.clearCurrentImagePoints);
     document.getElementById("btnDeleteImage").addEventListener("click", App.deleteCurrentImage);
+    document.getElementById("btnConfirmKeypointsComplete").addEventListener("click", App.confirmKeypointsComplete);
     document.getElementById("btnAutoDetect").addEventListener("click", App.handleAutoDetectCurrent);
     document.getElementById("btnAutoDetectEnhanced").addEventListener("click", () => App.handleAutoDetectCurrent({ useEnhanced: true }));
     document.getElementById("btnShortcutHelp").addEventListener("click", App.showShortcuts);
@@ -438,15 +439,10 @@ const App = {
       };
       await App.loadManifest();
       App.renderSaveInfo();
-      const template = info.template_fallback || {};
-      if (info.applied && template.enabled) {
-        App.setStatus(
-          `${resultLabel}完成：模型识别 ${info.visible_count || 0} 个点，模板补齐 ${template.filled_count || 0} 个点，请逐点复核`,
-        );
-      } else if (info.applied && info.visible_count > 0) {
-        App.setStatus(`${resultLabel}完成：识别到 ${info.visible_count} 个点，已保留人工修改点`);
+      if (info.applied && info.visible_count > 0) {
+        App.setStatus(`${resultLabel}完成：识别到 ${info.visible_count} 个点，未识别到的点保持缺失`);
       } else {
-        App.setStatus(`${resultLabel}未找到可用点，请使用模板点拖拽复核或把图片发给项目团队排查`);
+        App.setStatus(`${resultLabel}未找到可用点，所有未识别点保持缺失，请人工标注或把图片发给项目团队排查`);
       }
     } catch (err) {
       App.setStatus(`识别失败: ${err.message}`);
@@ -822,6 +818,42 @@ const App = {
     } catch (err) {
       App.setStatus(`删除失败: ${err.message}`);
     }
+  },
+
+  keypointsConfirmed: () => {
+    const review = App.state.annotation?.review || {};
+    return review.manual_keypoints_complete?.status === "confirmed";
+  },
+
+  visibleKeypointCount: () => {
+    if (!App.state.annotation) return 0;
+    return Object.values(App.state.annotation.keypoints || {}).filter((point) => App.pointIsVisible(point)).length;
+  },
+
+  confirmKeypointsComplete: async () => {
+    if (!App.state.annotation) {
+      App.setStatus("请先打开一张图片");
+      return;
+    }
+    const visible = App.visibleKeypointCount();
+    const missing = Math.max(0, 22 - visible);
+    const message =
+      missing > 0
+        ? `当前还有 ${missing} 个关键点缺失。\n\n仍要人工确认本图关键点已完成吗？`
+        : "确认本图关键点已经人工复核完成吗？";
+    if (!window.confirm(message)) return;
+    App.pushHistory();
+    App.state.annotation.review = App.state.annotation.review || {};
+    App.state.annotation.review.manual_keypoints_complete = {
+      status: "confirmed",
+      visible_count: visible,
+      missing_count: missing,
+      updated_at: new Date().toISOString(),
+      annotator: document.getElementById("annotatorInput")?.value?.trim() || "default",
+    };
+    App.refreshAll();
+    const saved = await App.saveAnnotation();
+    App.setStatus(saved ? "已确认关键点完成" : "关键点确认保存失败");
   },
 
   scrollActiveThumbnailIntoView: () => {
@@ -1412,6 +1444,7 @@ const App = {
     App.renderScanPanel();
     App.syncDisplayToggles();
     App.updateSummary();
+    App.renderKeypointConfirmation();
     App.updateSelectedBox();
   },
 
@@ -2537,6 +2570,27 @@ const App = {
     document.getElementById("countEstimated").textContent = counts.estimated;
     document.getElementById("countManual").textContent = counts.manual;
     document.getElementById("countMissing").textContent = counts.missing;
+  },
+
+  renderKeypointConfirmation: () => {
+    const text = document.getElementById("keypointConfirmText");
+    const button = document.getElementById("btnConfirmKeypointsComplete");
+    if (!text || !button) return;
+    if (!App.state.annotation) {
+      text.textContent = "关键点尚未人工确认完成";
+      button.disabled = true;
+      return;
+    }
+    button.disabled = false;
+    const review = App.state.annotation.review?.manual_keypoints_complete;
+    if (review?.status === "confirmed") {
+      const annotator = review.annotator || "default";
+      const timeText = review.updated_at ? new Date(review.updated_at).toLocaleString() : "";
+      text.textContent = `已由 ${annotator} 确认关键点完成${timeText ? `（${timeText}）` : ""}`;
+      return;
+    }
+    const visible = App.visibleKeypointCount();
+    text.textContent = visible >= 22 ? "22 个关键点已齐，等待人工确认完成" : `已标 ${visible}/22，未完成`;
   },
 
   updateSelectedBox: () => {

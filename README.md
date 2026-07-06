@@ -18,7 +18,8 @@ This project is a research annotation aid. It is not a medical device, does not 
 - Provides an enhanced preview and enhanced auto-detect retry based on the hip_demo-style X-ray contrast pipeline.
 - Opens images in enhanced view by default, with a one-click original-image comparison.
 - Caches enhanced/DICOM display PNGs under local app data so repeated image switching does not recompute enhancement every time.
-- Adds draggable template guesses when model output is missing or incomplete, so reviewers do not start from an empty canvas.
+- Keeps model-missing landmarks explicitly missing when auto-detection is incomplete or unavailable, so reviewers can manually place only verified points.
+- Requires a reviewer to explicitly confirm keypoints complete; 22 model-detected points are treated as review-ready, not complete.
 - Supports a non-destructive ROI crop box for cluttered-background images; recognition can retry inside the ROI while saved coordinates remain in the original image coordinate system.
 - Supports a four-corner scan-like transform for phone-shot X-rays; current-image recognition can run on the perspective-corrected view and map points back to original coordinates.
 - Writes visible workspace progress files so a folder can show which images are unfinished, auto-initialized, in progress, or complete.
@@ -114,7 +115,7 @@ Device selection:
 - `HIP22_DEVICE=cpu`: force CPU inference.
 - `HIP22_DEVICE=cuda:0`: force a specific GPU.
 
-If the model file is missing or `ultralytics` is unavailable, the tool still opens images and creates low-confidence draggable template guesses with a visible warning instead of returning an internal server error.
+If the model file is missing or `ultralytics` is unavailable, the tool still opens images and leaves all model-missing landmarks explicitly missing with a visible warning instead of returning an internal server error.
 
 ## DICOM, Enhanced Preview, And Shenton Prototype
 
@@ -126,7 +127,7 @@ Version 0.2.0 adds prerelease research support for DICOM and Shenton curve colle
 - Folder import queues model-assisted initialization with enhanced preprocessing by default; `Enhanced Detect` uses the same preprocessing path for current-image retries.
 - If a reviewer draws an ROI crop, current-image auto-detect retries inside that ROI and maps detected points back to the original image coordinates.
 - If a reviewer marks four scan corners, current-image auto-detect first warps the image into a scan-like view, then maps detected points back to the original image coordinates. This is intended for phone-shot images with visible film borders.
-- If model output is unavailable or incomplete, missing points are filled with `template_guess` points from a normalized demo-derived template. These are starting positions only and require review.
+- If model output is unavailable or incomplete, missing points remain missing. The tool no longer fills absent model output with template guesses.
 - Default 22-point guide connections are hidden by default to reduce occlusion. Manual connections, Shenton curves, measurement lines, and point labels each have separate display toggles.
 - The Shenton tool lets a reviewer mark left/right obturator upper curve and femoral-neck inner-lower curve with at least 3 points per segment; more points are allowed for curve fitting. The reviewer records `continuous`, `discontinuous`, or `uncertain`. The tool no longer asks reviewers to mark an extension intersection; legacy intersection fields are read for compatibility only and are ignored by training export. Measurements are research aids only, not clinical conclusions.
 - `/api/annotation/measurements/compute` returns Shenton endpoint `gap_px`, optional `gap_mm`, AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, acetabular depth, and warnings. Acetabular depth is shown in mm when DICOM PixelSpacing is available.
@@ -162,7 +163,7 @@ Existing data priority:
 
 1. `annotations/<image_stem>.json`
 2. same-folder `<image_stem>.txt`
-3. model-assisted initialization with template fallback when needed
+3. model-assisted initialization; points not detected by the model remain missing
 
 Existing JSON and imported sidecar labels are treated as user data and are not overwritten by auto-detection.
 
@@ -177,12 +178,12 @@ All point, Shenton, ROI, scan-transform, measurement, and DICOM-display coordina
 Important fields:
 
 - `image`: filename, dimensions, split, source format, pixel spacing fields, DICOM warnings, and side convention. DICOM PHI fields such as patient name, patient ID, accession number, and birth date are not saved.
-- `keypoints`: the fixed 22-key schema. `source="pose11_side"` means model output; `source="template_guess"` means a low-confidence draggable fallback point; `source="manual"` means the reviewer moved or placed the point.
+- `keypoints`: the fixed 22-key schema. `source="pose11_side"` means model output; `source="template_guess"` may appear in legacy data only; `source="manual"` means the reviewer moved or placed the point.
 - `roi_crop`: optional non-destructive crop box with `enabled`, `x`, `y`, `width`, `height`, `source`, `updated_at`, and `annotator`.
 - `scan_transform`: optional non-destructive four-corner transform with `enabled`, `corners`, `mode`, `source`, `updated_at`, and `annotator`.
 - `shenton_curves` and `shenton_review`: left/right Shenton curve point lists and doctor review status.
 - `measurements_snapshot`: computed research-aid measurements such as Shenton gap, AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, and acetabular depth with optional pixel-spacing conversion.
-- `auto_initialization`: model source, fallback attempts, preprocessing label, ROI/scan transform used for retry, original model visible count, warnings, and `template_fallback` metadata.
+- `auto_initialization`: model source, fallback attempts, preprocessing label, ROI/scan transform used for retry, original model visible count, warnings, and disabled `template_fallback` compatibility metadata.
 
 ## Landmark Schema
 

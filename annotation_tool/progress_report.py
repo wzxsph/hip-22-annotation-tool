@@ -220,7 +220,7 @@ def _status_marker_text(counts: dict[str, int]) -> str:
         f"标注未完成：{counts['in_progress']} 张\n"
         f"关键点完成：{counts['keypoint_complete']} 张\n"
         f"Shenton完成：{counts['shenton_complete']} 张\n\n"
-        "已完成表示：关键点 22/22 且左右两侧 Shenton 曲线均已标注并完成医生判断。\n"
+        "已完成表示：关键点已由人工确认完成，且左右两侧 Shenton 曲线均已标注并完成医生判断。\n"
         "请打开 HIP22_status_report.html 查看每张图片的状态。\n"
         "医生标注完成后，保存并将整个文件夹发送给项目团队即可。\n"
     )
@@ -318,7 +318,7 @@ def _html_report(rows: list[dict[str, Any]], counts: dict[str, int]) -> str:
   </head>
   <body>
     <h1>Hip22 标注进度</h1>
-    <p>保存后将整个文件夹发送给项目团队即可。关键点完成、Shenton完成都属于中间状态；完成表示关键点和 Shenton 均完成。</p>
+    <p>保存后将整个文件夹发送给项目团队即可。关键点完成、Shenton完成都属于中间状态；完成表示关键点已人工确认完成，且 Shenton 已完成。</p>
     <section class="summary">{summary_cards}</section>
     <table>
       <thead>

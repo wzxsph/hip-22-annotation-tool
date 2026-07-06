@@ -441,6 +441,7 @@ button.danger:hover {
 
 .summary-grid div,
 .selected-box,
+.completion-actions,
 .measurement-box,
 .settings-box,
 .connection-box,
@@ -537,11 +538,22 @@ button.danger:hover {
 .summary-grid span,
 .selected-box span,
 .selected-box small,
+.completion-actions small,
 .dataset-root-box span,
 .dataset-root-box small {
   display: block;
   color: var(--muted);
   font-size: 12px;
+}
+
+.completion-actions {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.completion-actions small {
+  line-height: 1.4;
 }
 
 .measurement-box {

@@ -49,7 +49,7 @@ def test_open_folder_switches_workspace_without_mixing_previous_images(tmp_path)
         save_settings(old_settings)
 
 
-def test_open_folder_marks_full_keypoints_without_shenton_as_keypoint_complete(tmp_path):
+def test_open_folder_marks_full_manual_keypoints_without_confirmation_as_in_progress(tmp_path):
     old_settings = load_settings()
     client = TestClient(app)
     workspace = tmp_path / "workspace"
@@ -66,11 +66,11 @@ def test_open_folder_marks_full_keypoints_without_shenton_as_keypoint_complete(t
 
         listed = client.get("/api/annotation/list").json()
         item = listed["images"][0]
-        assert item["status"] == "keypoint_complete"
-        assert item["keypoint_status"] == "complete"
+        assert item["status"] == "in_progress"
+        assert item["keypoint_status"] == "in_progress"
         assert item["shenton_status"] == "pending"
         assert listed["progress"]["counts"]["done"] == 0
-        assert listed["progress"]["counts"]["keypoint_complete"] == 1
+        assert listed["progress"]["counts"]["in_progress"] == 1
         assert listed["progress"]["counts"]["needs_review"] == 1
     finally:
         save_settings(old_settings)
@@ -132,8 +132,8 @@ def test_list_refreshes_manifest_when_annotation_json_is_newer(tmp_path):
         listed = client.get("/api/annotation/list").json()
 
         item = listed["images"][0]
-        assert item["status"] == "keypoint_complete"
-        assert item["keypoint_status"] == "complete"
+        assert item["status"] == "in_progress"
+        assert item["keypoint_status"] == "in_progress"
         assert item["shenton_status"] == "pending"
         assert item["annotation_mtime_ns"] == stored_path.stat().st_mtime_ns
     finally:
@@ -344,6 +344,36 @@ def test_save_can_skip_manifest_rewrite(monkeypatch, tmp_path):
         save_settings(old_settings)
 
 
+def test_manual_keypoint_confirmation_marks_keypoints_complete_even_with_missing_points(tmp_path):
+    old_settings = load_settings()
+    client = TestClient(app)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_image(workspace / "case.png")
+    annotation = create_blank_annotation("case.png", 80, 60, annotator="doctor-a")
+    annotation.keypoints["left_acetabular_outer"] = make_keypoint(
+        "left", "acetabular_outer", 20, 20, source="manual", confidence=1
+    )
+    annotation.review["manual_keypoints_complete"] = {
+        "status": "confirmed",
+        "updated_at": "2026-07-06T00:00:00Z",
+        "annotator": "doctor-a",
+    }
+    try:
+        save_settings({"dataset_root": str(workspace), "auto_detect": False})
+
+        res = client.post("/api/annotation/save", json=annotation.model_dump() if hasattr(annotation, "model_dump") else annotation.dict())
+
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["annotation_progress"]["keypoint_status"] == "complete"
+        assert payload["annotation_status"] == "keypoint_complete"
+        listed = client.get("/api/annotation/list").json()
+        assert listed["images"][0]["keypoint_status"] == "complete"
+    finally:
+        save_settings(old_settings)
+
+
 def test_image_endpoint_serves_cached_thumbnail(tmp_path):
     old_settings = load_settings()
     client = TestClient(app)
@@ -519,18 +549,19 @@ def test_manual_auto_detect_no_result_records_warning_without_overwriting(monkey
 
         assert res.status_code == 200
         payload = res.json()
-        assert payload["auto_detect"]["applied"] is True
+        assert payload["auto_detect"]["applied"] is False
         assert payload["auto_detect"]["visible_count"] == 0
-        assert payload["auto_detect"]["applied_visible_count"] == 22
-        assert payload["auto_detect"]["template_fallback"]["enabled"] is True
-        assert payload["auto_detect"]["template_fallback"]["filled_count"] == 21
+        assert payload["auto_detect"]["applied_visible_count"] == 1
+        assert payload["auto_detect"]["template_fallback"]["enabled"] is False
+        assert payload["auto_detect"]["template_fallback"]["filled_count"] == 0
         saved = load_annotation("case.png", workspace)
         assert saved is not None
         assert saved.keypoints["left_acetabular_outer"].x == 40
         assert saved.keypoints["left_acetabular_outer"].source == "manual"
-        assert saved.keypoints["right_acetabular_outer"].source == "template_guess"
+        assert saved.keypoints["right_acetabular_outer"].source == "missing"
+        assert saved.keypoints["right_acetabular_outer"].visible is False
         assert saved.auto_initialization["source"] == "model-no-result"
-        assert saved.auto_initialization["template_fallback"]["filled_count"] == 21
+        assert saved.auto_initialization["template_fallback"]["filled_count"] == 0
         assert saved.auto_initialization["model_visible_count"] == 0
         assert saved.auto_initialization["warnings"][0] == "no visible keypoints"
     finally:
@@ -591,7 +622,8 @@ def test_manual_auto_detect_uses_roi_and_maps_points_to_original_coordinates(mon
         point = saved.keypoints["right_acetabular_outer"]
         assert point.x == 15
         assert point.y == 21
-        assert saved.auto_initialization["template_fallback"]["filled_count"] == 21
+        assert saved.auto_initialization["template_fallback"]["enabled"] is False
+        assert saved.auto_initialization["template_fallback"]["filled_count"] == 0
     finally:
         save_settings(old_settings)
 

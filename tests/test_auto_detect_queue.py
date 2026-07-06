@@ -50,3 +50,6 @@ def test_background_auto_detect_uses_enhanced_preprocess(monkeypatch, tmp_path):
     saved = load_annotation("case.png", tmp_path)
     assert saved is not None
     assert saved.auto_initialization["image_preprocess"] == "hip_demo_enhanced"
+    assert saved.auto_initialization["template_fallback"]["enabled"] is False
+    assert saved.auto_initialization["template_fallback"]["filled_count"] == 0
+    assert all(not point.visible for point in saved.keypoints.values())

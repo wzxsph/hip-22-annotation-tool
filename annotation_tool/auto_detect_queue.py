@@ -17,7 +17,7 @@ from .storage import (
     save_annotation,
     upsert_manifest_image,
 )
-from .template_points import apply_template_fallback, visible_keypoint_count
+from .template_points import visible_keypoint_count
 
 
 @dataclass(frozen=True)
@@ -109,6 +109,16 @@ def _apply_image_metadata(annotation, metadata: dict[str, Any]) -> None:
             setattr(annotation.image, key, metadata[key])
 
 
+def _disabled_template_fallback(*, reason: str, model_visible_count: int) -> dict[str, object]:
+    return {
+        "enabled": False,
+        "filled_count": 0,
+        "reason": reason,
+        "model_visible_count": int(model_visible_count),
+        "note": "Template fallback is disabled; missing model points remain missing for manual annotation.",
+    }
+
+
 def _ensure_worker_locked() -> None:
     global _worker
     if _worker is not None and _worker.is_alive():
@@ -188,14 +198,11 @@ def _process_item(item: AutoDetectItem) -> str:
     result, image_preprocess, roi_used, scan_used = estimate_keypoints_with_preprocessing(image, use_enhanced=item.use_enhanced)
     model_visible_count = visible_keypoint_count(result.keypoints)
     annotation.keypoints = result.keypoints
-    template_fallback = apply_template_fallback(
-        annotation,
+    template_fallback = _disabled_template_fallback(
         reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
         model_visible_count=model_visible_count,
     )
     warnings = list(result.warnings)
-    if template_fallback["enabled"]:
-        warnings.append("Auto-detect was incomplete; draggable template points were added for doctor review.")
     annotation.auto_initialization = {
         "source": result.source,
         "strategy": result.strategy,

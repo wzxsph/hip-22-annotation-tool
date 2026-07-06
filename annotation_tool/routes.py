@@ -46,7 +46,7 @@ from .storage import (
     upsert_manifest_image,
     label_path,
 )
-from .template_points import apply_template_fallback, visible_keypoint_count
+from .template_points import visible_keypoint_count
 from .yolo_export import annotation_to_yolo_text, data_yaml_text
 
 router = APIRouter(prefix="/api/annotation", tags=["annotation"])
@@ -523,14 +523,11 @@ def _auto_annotation_for_image(
         result, image_preprocess, roi_used, scan_used = estimate_keypoints_with_preprocessing(image, use_enhanced=False)
         model_visible_count = visible_keypoint_count(result.keypoints)
         annotation.keypoints = result.keypoints
-        template_fallback = apply_template_fallback(
-            annotation,
+        template_fallback = _disabled_template_fallback(
             reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
             model_visible_count=model_visible_count,
         )
         warnings = list(result.warnings)
-        if template_fallback["enabled"]:
-            warnings.append("Auto-detect was incomplete; draggable template points were added for doctor review.")
         annotation.auto_initialization = {
             "source": result.source,
             "strategy": result.strategy,
@@ -567,6 +564,16 @@ def _blank_annotation_for_image(filename: str, image: Image.Image, *, split: str
 
 def _count_visible_keypoints(annotation: Annotation) -> int:
     return sum(1 for point in annotation.keypoints.values() if point.visible and point.x is not None and point.y is not None)
+
+
+def _disabled_template_fallback(*, reason: str, model_visible_count: int) -> dict[str, object]:
+    return {
+        "enabled": False,
+        "filled_count": 0,
+        "reason": reason,
+        "model_visible_count": int(model_visible_count),
+        "note": "Template fallback is disabled; missing model points remain missing for manual annotation.",
+    }
 
 
 def _count_manual_keypoints(annotation: Annotation) -> int:
@@ -898,17 +905,14 @@ async def auto_detect_image(request: AutoDetectImageRequest):
         annotation = _merge_auto_keypoints(existing, auto_annotation, preserve_manual=request.preserve_manual)
     else:
         annotation = existing
-    template_fallback = apply_template_fallback(
-        annotation,
+    template_fallback = _disabled_template_fallback(
         reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
         model_visible_count=model_visible_count,
     )
     applied_visible_count = _count_visible_keypoints(annotation)
-    applied = model_visible_count > 0 or template_fallback["enabled"]
+    applied = model_visible_count > 0
 
     warnings = list(result.warnings)
-    if template_fallback["enabled"]:
-        warnings.append("Auto-detect was incomplete; draggable template points were added for doctor review.")
     annotation.auto_initialization = {
         "source": result.source,
         "strategy": result.strategy,

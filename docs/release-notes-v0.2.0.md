@@ -12,7 +12,7 @@ This prerelease adds DICOM import, enhanced X-ray preview, reduced default line 
 - Opens in Enhanced display by default, with Original view available for comparison. Enhanced preview uses a hip_demo-style contrast pipeline and does not change coordinates or overwrite source images.
 - Caches rendered Enhanced/DICOM display PNGs under local app data so repeated image switching does not recompute the same preview.
 - Uses enhanced preprocessing by default for folder-import background auto-detection; Enhanced Detect uses the same path for current-image retries.
-- Adds draggable `template_guess` fallback points when model output is unavailable or incomplete; template points are review starting positions, not clinical conclusions.
+- Leaves model-missing landmarks explicitly missing when auto-detection is unavailable or incomplete; template fallback is disabled for new auto-detection output.
 - Adds a non-destructive ROI crop tool for cluttered-background images. Current-image auto-detect can retry inside the ROI and maps results back to original image coordinates.
 - Adds a four-corner scan-like transform for phone-shot X-rays. Current-image auto-detect can run on the perspective-corrected view and inverse-map results back to original image coordinates.
 - Hides default 22-point guide connections by default, with toggles for default lines, manual lines, Shenton curves, measurement lines, and point numbers.

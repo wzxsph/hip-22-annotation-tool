@@ -31,6 +31,14 @@ def _complete_shenton(annotation) -> None:
         annotation.shenton_review[side]["status"] = "continuous"
 
 
+def _confirm_keypoints(annotation) -> None:
+    annotation.review["manual_keypoints_complete"] = {
+        "status": "confirmed",
+        "updated_at": "2026-07-06T00:00:00Z",
+        "annotator": "doctor-a",
+    }
+
+
 def test_progress_reports_are_written_next_to_dataset(tmp_path):
     pending_image = tmp_path / "pending.png"
     done_image = tmp_path / "done.png"
@@ -41,6 +49,7 @@ def test_progress_reports_are_written_next_to_dataset(tmp_path):
 
     annotation = create_blank_annotation("done.png", 80, 60, annotator="doctor-a")
     _fill_all_keypoints(annotation)
+    _confirm_keypoints(annotation)
     _complete_shenton(annotation)
     save_annotation(annotation, tmp_path)
     upsert_manifest_image(done_image, annotation=annotation, root=tmp_path)
@@ -55,7 +64,7 @@ def test_progress_reports_are_written_next_to_dataset(tmp_path):
     assert "badge done'>完成</span>" in html
 
 
-def test_full_keypoints_without_shenton_are_keypoint_complete(tmp_path):
+def test_full_manual_keypoints_without_confirmation_are_in_progress(tmp_path):
     image_path = tmp_path / "case.png"
     _write_image(image_path)
     annotation = create_blank_annotation("case.png", 80, 60, annotator="doctor-a")
@@ -66,11 +75,30 @@ def test_full_keypoints_without_shenton_are_keypoint_complete(tmp_path):
     rows = build_progress_rows(tmp_path, manifest)
     payload = build_progress_payload(tmp_path, manifest)
 
-    assert rows[0]["status"] == "keypoint_complete"
-    assert rows[0]["keypoint_status"] == "complete"
+    assert rows[0]["status"] == "in_progress"
+    assert rows[0]["keypoint_status"] == "in_progress"
     assert rows[0]["shenton_status"] == "pending"
     assert rows[0]["status_detail"] == "关键点 22/22；Shenton 0/2"
     assert payload["counts"]["done"] == 0
+    assert payload["counts"]["in_progress"] == 1
+    assert payload["counts"]["needs_review"] == 1
+
+
+def test_confirmed_keypoints_without_shenton_are_keypoint_complete(tmp_path):
+    image_path = tmp_path / "case.png"
+    _write_image(image_path)
+    annotation = create_blank_annotation("case.png", 80, 60, annotator="doctor-a")
+    _fill_all_keypoints(annotation)
+    _confirm_keypoints(annotation)
+    save_annotation(annotation, tmp_path)
+    manifest = upsert_manifest_image(image_path, annotation=annotation, root=tmp_path)
+
+    rows = build_progress_rows(tmp_path, manifest)
+    payload = build_progress_payload(tmp_path, manifest)
+
+    assert rows[0]["status"] == "keypoint_complete"
+    assert rows[0]["keypoint_status"] == "complete"
+    assert rows[0]["shenton_status"] == "pending"
     assert payload["counts"]["keypoint_complete"] == 1
     assert payload["counts"]["needs_review"] == 1
 
@@ -93,7 +121,7 @@ def test_complete_shenton_without_keypoints_is_shenton_complete(tmp_path):
     assert payload["counts"]["needs_review"] == 1
 
 
-def test_progress_payload_counts_review_buckets(tmp_path):
+def test_progress_payload_counts_partial_model_points_as_in_progress(tmp_path):
     image_path = tmp_path / "auto.png"
     _write_image(image_path)
     annotation = create_blank_annotation("auto.png", 80, 60, annotator="doctor-a")
@@ -106,6 +134,25 @@ def test_progress_payload_counts_review_buckets(tmp_path):
     rows = build_progress_rows(tmp_path, manifest)
     payload = build_progress_payload(tmp_path, manifest)
 
+    assert rows[0]["status"] == "in_progress"
+    assert rows[0]["keypoint_status"] == "in_progress"
+    assert payload["counts"]["in_progress"] == 1
+    assert payload["counts"]["needs_review"] == 1
+
+
+def test_progress_payload_counts_full_model_points_as_auto_review(tmp_path):
+    image_path = tmp_path / "auto.png"
+    _write_image(image_path)
+    annotation = create_blank_annotation("auto.png", 80, 60, annotator="doctor-a")
+    for point in annotation.keypoints.values():
+        annotation.keypoints[point.id] = make_keypoint(point.side, point.name, 10, 10, source="pose11_side", confidence=0.8)
+    save_annotation(annotation, tmp_path)
+    manifest = upsert_manifest_image(image_path, annotation=annotation, root=tmp_path)
+
+    rows = build_progress_rows(tmp_path, manifest)
+    payload = build_progress_payload(tmp_path, manifest)
+
     assert rows[0]["status"] == "auto"
+    assert rows[0]["keypoint_status"] == "auto"
     assert payload["counts"]["auto"] == 1
     assert payload["counts"]["needs_review"] == 1
