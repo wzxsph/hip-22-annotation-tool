@@ -2,8 +2,9 @@
 
 Label: non-production ready
 
-This release adds manual completion confirmation for both keypoints and Shenton lines, prevents
-auto-filling missing model points with template fallback data, and improves the review panel layout.
+This release adds manual completion confirmation for keypoints and Shenton lines, 14 default
+anatomical guide connections, disables template fallback for missing model points, and updates
+the default model to yolo11s dataset4 v2.
 
 ## Highlights
 
@@ -11,12 +12,15 @@ auto-filling missing model points with template fallback data, and improves the 
   keypoints count as complete. All 22 model-detected visible points are treated as review-ready
   (status `auto`), not complete.
 - **Manual Shenton confirmation.** A matching "确认沈通线完成" button requires explicit reviewer
-  sign-off for Shenton curves, consistent with the keypoint confirmation workflow.
+  sign-off for Shenton curves, consistent with the keypoint confirmation workflow. Shenton &
+  Measurement panel is collapsed by default with the same styling as Advanced Settings.
+- **14 default guide connections.** Predefined anatomical connections (acetabular, femoral head,
+  femoral shaft, cross-midline) are drawn in light red on the canvas. Enabled by default with
+  a toggle under Display settings. Manual connections remain independently toggleable in yellow.
 - **Template fallback disabled.** When model output is unavailable or incomplete, missing landmarks
   stay explicitly missing (`visible=False`, `source="missing"`) instead of being filled with
   draggable template guesses. Reviewers must manually place only verified points.
-- **Collapsible Shenton panel.** The Shenton & Measurement section is collapsed by default, styled
-  consistently with the Advanced Settings panel.
+- **Updated default model.** Changed from yolo11n-best to yolo11s-curriculum-stage2-dataset4-v2-best.
 - **New `shenton_awaiting_confirmation` status.** Shenton curves that are fully drawn and reviewed
   on both sides but not yet confirmed by the reviewer show as a distinct filter state.
 
@@ -32,6 +36,19 @@ auto-filling missing model points with template fallback data, and improves the 
 | `shenton_complete` | Shenton manually confirmed |
 | `done` | Both keypoints and Shenton confirmed |
 
+## Default Guide Connections
+
+| Pair | Description |
+|------|-------------|
+| 左5 - 左6 | 股骨干轴近端-远端 |
+| 左8 - 左3 - 左9 | 股骨头内侧-中心-外侧 |
+| 左3 - 左7 | 股骨头中心-股骨颈轴中心 |
+| 左1 - 左2 | 髋臼外上缘-Y软骨中心 |
+| 左1 - 左4 | 髋臼外上缘-泪滴下缘 |
+| (same for right) | |
+| 左2 - 右2 | Y软骨中心（跨中线） |
+| 左4 - 右4 | 泪滴下缘（跨中线） |
+
 ## Breaking Changes from v0.2.0
 
 - Annotations saved by v0.2.0 that had `source="template_guess"` keypoints are still loadable
@@ -40,6 +57,8 @@ auto-filling missing model points with template fallback data, and improves the 
   for `complete` / `done` status. Annotations without these fields default to not-complete.
 - The `auto_initialization.template_fallback` field now writes `enabled: false` with a
   compatibility note instead of filling points.
+- Default model changed from yolo11n-best.pt to yolo11s-curriculum-stage2-dataset4-v2-best.pt.
+  Set `HIP22_MODEL_PATH` to override.
 
 ## Verification
 
