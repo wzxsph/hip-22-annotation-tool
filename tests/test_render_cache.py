@@ -1,5 +1,7 @@
+import numpy as np
 from PIL import Image
 
+from annotation_tool.image_io import read_supported_image
 from annotation_tool import render_cache
 
 
@@ -19,3 +21,32 @@ def test_cached_rendered_png_reuses_cache_until_source_changes(monkeypatch, tmp_
 
     assert third != first
     assert third.exists()
+
+
+def test_read_supported_image_normalizes_16bit_tiff(tmp_path):
+    source = tmp_path / "case.tif"
+    pixels = np.linspace(1000, 4000, 100 * 80, dtype=np.uint16).reshape(80, 100)
+    Image.fromarray(pixels).save(source)
+
+    image, metadata = read_supported_image(source)
+    data = np.asarray(image)
+
+    assert metadata["source_format"] == "tif"
+    assert image.mode == "RGB"
+    assert data.min() == 0
+    assert data.max() == 255
+    assert len(np.unique(data.reshape(-1, 3), axis=0)) > 16
+
+
+def test_cached_rendered_png_enhances_16bit_tiff(monkeypatch, tmp_path):
+    source = tmp_path / "case.tif"
+    pixels = np.linspace(1000, 4000, 100 * 80, dtype=np.uint16).reshape(80, 100)
+    Image.fromarray(pixels).save(source)
+    monkeypatch.setattr(render_cache, "user_data_dir", lambda: tmp_path / "user-data")
+
+    enhanced = render_cache.cached_rendered_png(source, enhanced=True)
+    data = np.asarray(Image.open(enhanced))
+
+    assert data.min() == 0
+    assert data.max() == 255
+    assert len(np.unique(data.reshape(-1, 3), axis=0)) > 16

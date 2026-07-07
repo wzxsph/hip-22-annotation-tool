@@ -36,12 +36,15 @@ def test_blank_points_are_saved_as_missing_not_removed():
 def test_blank_annotation_has_default_editable_connections():
     annotation = create_blank_annotation("case.png", 1000, 800)
 
-    assert len(annotation.connections) == 25
+    assert len(annotation.connections) == 23
     assert all(item.source == "default" for item in annotation.connections)
     pairs = {frozenset((item.point_a, item.point_b)) for item in annotation.connections}
     assert frozenset(("left_acetabular_outer", "left_triradiate_center")) in pairs
     assert frozenset(("left_femoral_head_lateral", "left_femoral_head_center")) in pairs
     assert frozenset(("right_obturator_upper", "left_obturator_upper")) in pairs
+    assert frozenset(("left_acetabular_outer", "left_teardrop_lower")) not in pairs
+    assert frozenset(("right_acetabular_outer", "right_teardrop_lower")) not in pairs
+    assert frozenset(("left_teardrop_lower", "right_teardrop_lower")) not in pairs
 
 
 def test_legacy_annotation_without_connections_gets_defaults_but_empty_list_is_preserved():
@@ -50,7 +53,7 @@ def test_legacy_annotation_without_connections_gets_defaults_but_empty_list_is_p
         {"image": {"filename": "case.png", "width": 100, "height": 100}, "keypoints": {}, "connections": []}
     )
 
-    assert len(legacy.connections) == 25
+    assert len(legacy.connections) == 23
     assert explicit_empty.connections == []
 
 

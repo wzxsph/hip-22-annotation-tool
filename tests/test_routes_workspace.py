@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 
 from fastapi.testclient import TestClient
+import numpy as np
 from PIL import Image
 
 from annotation_tool import auto_detection as auto_detection_module
@@ -76,7 +77,7 @@ def test_open_folder_marks_full_manual_keypoints_without_confirmation_as_in_prog
         save_settings(old_settings)
 
 
-def test_delete_image_removes_files_and_manifest_entry(tmp_path):
+def test_delete_image_moves_files_to_same_folder_trash_and_removes_manifest_entry(tmp_path):
     old_settings = load_settings()
     client = TestClient(app)
     workspace = tmp_path / "workspace"
@@ -97,12 +98,24 @@ def test_delete_image_removes_files_and_manifest_entry(tmp_path):
         res = client.delete("/api/annotation/image/case.png")
 
         assert res.status_code == 200
-        assert res.json()["filename"] == "case.png"
+        payload = res.json()
+        assert payload["filename"] == "case.png"
+        assert Path(payload["trash_dir"]) == Path("images/train/trash")
         assert not image_path.exists()
         assert not annotation_path("case.png", workspace).exists()
         assert not root_legacy_json.exists()
         assert not image_path.with_suffix(".txt").exists()
         assert not root_sidecar.exists()
+        trash_dir = image_dir / "trash"
+        assert (trash_dir / "case.png").exists()
+        trashed_sources = {Path(item["source"]) for item in payload["trashed"]}
+        assert Path("images/train/case.png") in trashed_sources
+        assert Path("annotations/case.json") in trashed_sources
+        assert Path("case.json") in trashed_sources
+        assert Path("images/train/case.txt") in trashed_sources
+        assert Path("case.txt") in trashed_sources
+        assert all((workspace / item["trash_path"]).parent == trash_dir for item in payload["trashed"])
+        assert all((workspace / item["trash_path"]).exists() for item in payload["trashed"])
         assert load_manifest(workspace).images == []
     finally:
         save_settings(old_settings)
@@ -388,6 +401,28 @@ def test_image_endpoint_serves_cached_thumbnail(tmp_path):
         assert res.status_code == 200
         assert res.headers["content-type"].startswith("image/jpeg")
         assert len(res.content) < (workspace / "case.png").stat().st_size or len(res.content) < 10_000
+    finally:
+        save_settings(old_settings)
+
+
+def test_image_endpoint_renders_tiff_original_and_enhanced_as_png(tmp_path):
+    old_settings = load_settings()
+    client = TestClient(app)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    pixels = np.linspace(1, 65000, 80 * 60, dtype=np.uint16).reshape(60, 80)
+    Image.fromarray(pixels).save(workspace / "case.tif")
+    try:
+        save_settings({"dataset_root": str(workspace), "auto_detect": False})
+
+        original = client.get("/api/annotation/image/case.tif")
+        enhanced = client.get("/api/annotation/image/case.tif?enhanced=true")
+
+        assert original.status_code == 200
+        assert enhanced.status_code == 200
+        assert original.headers["content-type"].startswith("image/png")
+        assert enhanced.headers["content-type"].startswith("image/png")
+        assert original.content != enhanced.content
     finally:
         save_settings(old_settings)
 

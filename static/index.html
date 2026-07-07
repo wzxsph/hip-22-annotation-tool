@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>22 点髋关节 X 光标注</title>
-    <link rel="stylesheet" href="/static/style.css?v=default-connections" />
+    <link rel="stylesheet" href="/static/style.css?v=streamlined-display" />
   </head>
   <body>
     <main class="app-shell">
@@ -21,7 +21,7 @@
           <button id="btnFolder" type="button">导入文件夹</button>
           <button id="btnSave" type="button">保存</button>
           <button id="btnClearPoints" type="button" title="清空当前图片的 22 个关键点，不影响 Shenton 曲线、ROI 或扫描校正">清空点位</button>
-          <button id="btnDeleteImage" class="danger" type="button" title="从当前文件夹删除这张图片及同名标注文件">删除本图</button>
+          <button id="btnDeleteImage" class="danger" type="button" title="将这张图片及同名标注文件移动到图片同目录 trash 文件夹">删除本图</button>
           <button id="btnAutoDetect" type="button" title="用原图对当前图片重新识别；保留已经人工修改的点">原图识别</button>
           <button id="btnAutoDetectEnhanced" type="button" title="用增强预览图识别当前图片；仅辅助识别，不覆盖原图">增强识别</button>
           <button id="btnShortcutHelp" type="button" title="查看快捷键">快捷键</button>
@@ -222,6 +222,10 @@
               <input id="showPointLabelsToggle" type="checkbox" checked />
               <span>点编号</span>
             </label>
+            <label class="toggle-row">
+              <input id="showPoint10And11Toggle" type="checkbox" />
+              <span>10/11 点</span>
+            </label>
           </div>
           <div class="connection-box">
             <div class="settings-title">连线</div>
@@ -278,6 +282,6 @@
       </form>
     </dialog>
 
-    <script src="/static/app.js?v=default-connections"></script>
+    <script src="/static/app.js?v=streamlined-display"></script>
   </body>
 </html>

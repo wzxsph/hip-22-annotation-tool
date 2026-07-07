@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const SCAN_CORNER_LABELS = ["左上", "右上", "右下", "左下"];
+const DEFAULT_HIDDEN_POINT_NUMBERS = new Set([10, 11]);
 
 const App = {
   state: {
@@ -50,6 +51,7 @@ const App = {
     showManualConnections: true,
     showShenton: true,
     showMeasurements: true,
+    showPoint10And11: false,
     shentonSide: "left",
     shentonSegment: "obturator_upper_curve",
     roiStart: null,
@@ -182,6 +184,9 @@ const App = {
     });
     document.getElementById("showPointLabelsToggle").addEventListener("change", (event) => {
       App.state.showLabels = event.target.checked;
+    });
+    document.getElementById("showPoint10And11Toggle").addEventListener("change", (event) => {
+      App.state.showPoint10And11 = event.target.checked;
     });
     document.querySelectorAll("[data-image-view]").forEach((button) => {
       button.addEventListener("click", () => App.setImageView(button.dataset.imageView || "original"));
@@ -791,13 +796,13 @@ const App = {
       return;
     }
     const confirmed = window.confirm(
-      `确认从当前文件夹中删除这张图片吗？\n\n${filename}\n\n会同时删除同名标注 JSON、YOLO txt 和缓存预览。此操作不可撤销。`,
+      `确认从当前列表移除这张图片吗？\n\n${filename}\n\n图片、同名标注 JSON 和 YOLO txt 会移动到图片同目录的 trash 文件夹，缓存预览会清理。`,
     );
     if (!confirmed) return;
 
     const imagesBeforeDelete = App.state.manifestImages || [];
     const currentIndex = App.currentManifestIndex();
-    App.setStatus("正在删除当前图片...");
+    App.setStatus("正在移动当前图片到 trash...");
     try {
       const res = await fetch(`/api/annotation/image/${encodeURIComponent(filename)}`, { method: "DELETE" });
       await App.readJsonResponse(res, "delete image failed");
@@ -812,9 +817,9 @@ const App = {
       App.state.lastSavedSnapshot = "";
       if (nextItem) {
         await App.loadByName(App.imageFilename(nextItem), { skipManifest: true });
-        App.setStatus("已删除当前图片，并打开下一张");
+        App.setStatus("已移动当前图片到 trash，并打开下一张");
       } else {
-        App.clearWorkspaceView("已删除当前图片，当前文件夹没有更多图片");
+        App.clearWorkspaceView("已移动当前图片到 trash，当前文件夹没有更多图片");
         await App.loadManifest();
       }
     } catch (err) {
@@ -1019,15 +1024,12 @@ const App = {
     ["left_femoral_head_center", "left_femoral_head_lateral"],
     ["left_femoral_head_center", "left_femoral_neck_axis_center"],
     ["left_acetabular_outer", "left_triradiate_center"],
-    ["left_acetabular_outer", "left_teardrop_lower"],
     ["right_femoral_shaft_prox", "right_femoral_shaft_dist"],
     ["right_femoral_head_medial", "right_femoral_head_center"],
     ["right_femoral_head_center", "right_femoral_head_lateral"],
     ["right_femoral_head_center", "right_femoral_neck_axis_center"],
     ["right_acetabular_outer", "right_triradiate_center"],
-    ["right_acetabular_outer", "right_teardrop_lower"],
     ["left_triradiate_center", "right_triradiate_center"],
-    ["left_teardrop_lower", "right_teardrop_lower"],
   ],
 
   ensureDefaultConnections: (annotation) => {
@@ -1092,6 +1094,9 @@ const App = {
       App.fitToScreen();
       App.resetHistory();
       App.setStatus("已载入");
+    };
+    image.onerror = () => {
+      App.setStatus("图片载入失败，请检查格式或尝试重新导入");
     };
     image.src = src;
   },
@@ -1409,6 +1414,7 @@ const App = {
       showShentonToggle: App.state.showShenton,
       showMeasurementsToggle: App.state.showMeasurements,
       showPointLabelsToggle: App.state.showLabels,
+      showPoint10And11Toggle: App.state.showPoint10And11,
     };
     Object.entries(toggles).forEach(([id, value]) => {
       const element = document.getElementById(id);
@@ -1562,6 +1568,15 @@ const App = {
   },
 
   pointIsVisible: (point) => Boolean(point && point.visible && point.visibility > 0 && point.x !== null && point.y !== null),
+
+  pointIsDefaultHidden: (point) => DEFAULT_HIDDEN_POINT_NUMBERS.has(Number(point?.number)),
+
+  pointIsDisplayed: (key, point) =>
+    App.pointIsVisible(point) &&
+    (App.state.showPoint10And11 ||
+      !App.pointIsDefaultHidden(point) ||
+      key === App.state.selectedPoint ||
+      key === App.state.pendingConnectionStart),
 
   togglePointVisibility: (key, visible) => {
     if (!App.state.annotation?.keypoints?.[key]) return;
@@ -2049,7 +2064,7 @@ const App = {
     let best = null;
     let bestDistance = Infinity;
     for (const [key, point] of Object.entries(App.state.annotation.keypoints || {})) {
-      if (!App.pointIsVisible(point)) continue;
+      if (!App.pointIsDisplayed(key, point)) continue;
       const view = App.toViewportCoords(point.x, point.y);
       const distance = Math.hypot(view.x - x, view.y - y);
       if (distance < 12 && distance < bestDistance) {
@@ -2104,7 +2119,7 @@ const App = {
     for (const connection of App.visibleConnections()) {
       const p1 = App.state.annotation.keypoints[connection.point_a];
       const p2 = App.state.annotation.keypoints[connection.point_b];
-      if (!App.pointIsVisible(p1) || !App.pointIsVisible(p2)) continue;
+      if (!App.pointIsDisplayed(connection.point_a, p1) || !App.pointIsDisplayed(connection.point_b, p2)) continue;
       const a = App.toViewportCoords(p1.x, p1.y);
       const b = App.toViewportCoords(p2.x, p2.y);
       const distance = App.distanceToSegment(x, y, a.x, a.y, b.x, b.y);
@@ -2462,7 +2477,7 @@ const App = {
     App.visibleConnections().forEach((connection) => {
       const p1 = App.state.annotation.keypoints[connection.point_a];
       const p2 = App.state.annotation.keypoints[connection.point_b];
-      if (!App.pointIsVisible(p1) || !App.pointIsVisible(p2)) return;
+      if (!App.pointIsDisplayed(connection.point_a, p1) || !App.pointIsDisplayed(connection.point_b, p2)) return;
       const selected = connection.id === App.state.selectedConnection;
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
@@ -2559,7 +2574,7 @@ const App = {
     const inv = 1 / App.state.transform.scale;
     App.allKeys().forEach((key) => {
       const point = App.state.annotation.keypoints[key];
-      if (!App.pointIsVisible(point)) return;
+      if (!App.pointIsDisplayed(key, point)) return;
       const color = point.side === "left" ? "#d9480f" : "#1c7ed6";
       const pending = key === App.state.pendingConnectionStart;
       ctx.beginPath();

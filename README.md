@@ -117,7 +117,7 @@ If the model file is missing or `ultralytics` is unavailable, the tool still ope
 
 ## DICOM, Enhanced Preview, And Shenton Prototype
 
-Version 0.3.0 adds manual confirmation workflows and default guide connections:
+Version 0.3.1 adds manual confirmation workflows, streamlined default guide connections, and recoverable image deletion:
 
 - DICOM import reads `PixelSpacing` / `ImagerPixelSpacing`, applies rescale slope/intercept, window center/width, and `MONOCHROME1` inversion. Unsupported compressed/private formats are reported as warnings instead of stopping the whole folder import.
 - The annotation JSON stores non-PHI image metadata only: `source_format`, pixel spacing fields, spacing source, and DICOM warnings. It does not store `PatientName`, `PatientID`, `AccessionNumber`, or similar identifiers.
@@ -126,7 +126,8 @@ Version 0.3.0 adds manual confirmation workflows and default guide connections:
 - If a reviewer draws an ROI crop, current-image auto-detect retries inside that ROI and maps detected points back to the original image coordinates.
 - If a reviewer marks four scan corners, current-image auto-detect first warps the image into a scan-like view, then maps detected points back to the original image coordinates. This is intended for phone-shot images with visible film borders.
 - If model output is unavailable or incomplete, missing points remain missing. The tool no longer fills absent model output with template guesses.
-- 14 predefined anatomical guide connections (acetabular, femoral head, femoral shaft, cross-midline) are shown by default in light red. Default connections, manual connections, Shenton curves, measurement lines, and point labels each have separate display toggles.
+- 11 predefined anatomical guide connections (acetabular, femoral head, femoral shaft, cross-midline) are shown by default in light red, excluding #1-#4 and left #4-right #4. Default connections, manual connections, Shenton curves, measurement lines, point labels, and #10/#11 point display each have separate toggles.
+- The `Delete image` action moves the image plus same-name annotation JSON and YOLO txt files into a `trash` folder beside the image, so accidental deletion can be manually restored.
 - Manual keypoint confirmation: reviewers must explicitly click "确认关键点完成" before keypoints count as complete; 22 model-detected points are treated as review-ready (`auto`), not complete.
 - Manual Shenton confirmation: a matching "确认沈通线完成" button requires explicit reviewer sign-off for Shenton curves. Shenton & Measurement panel is collapsed by default.
 - The Shenton tool lets a reviewer mark left/right obturator upper curve and femoral-neck inner-lower curve with at least 3 points per segment; more points are allowed for curve fitting. The reviewer records `continuous`, `discontinuous`, or `uncertain`. The tool no longer asks reviewers to mark an extension intersection; legacy intersection fields are read for compatibility only and are ignored by training export. Measurements are research aids only, not clinical conclusions.

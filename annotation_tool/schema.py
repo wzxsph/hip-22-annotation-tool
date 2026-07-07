@@ -314,15 +314,13 @@ def default_connections(*, annotator: str = "") -> list[Connection]:
             add(side_key(side, a), side_key(side, b), f"{prefix} #1-#3-#7-#5-#6-#11", f"{side_id}_loop")
 
     image_path = [
-        side_key("left", 1),
         side_key("left", 4),
         side_key("left", 10),
         side_key("right", 10),
         side_key("right", 4),
-        side_key("right", 1),
     ]
     for point_a, point_b in zip(image_path, image_path[1:]):
-        add(point_a, point_b, "图像左 #1-#4-#10 到图像右 #10-#4-#1", "default_cross_image")
+        add(point_a, point_b, "图像左 #4-#10 到图像右 #10-#4", "default_cross_image")
     return connections
 
 

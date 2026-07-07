@@ -8,8 +8,8 @@ from .image_processing import enhance_xray_image
 from .paths import user_data_dir
 
 
-RENDER_CACHE_VERSION = "v1"
-THUMB_CACHE_VERSION = "v1"
+RENDER_CACHE_VERSION = "v3"
+THUMB_CACHE_VERSION = "v2"
 THUMB_MAX_SIZE = 220
 
 
@@ -36,7 +36,7 @@ def cached_rendered_png(source_path: Path, *, enhanced: bool) -> Path:
     if cache_path.exists():
         return cache_path
 
-    image, _metadata = read_supported_image(source_path)
+    image, _metadata = read_supported_image(source_path, normalize=not enhanced)
     if enhanced:
         image = enhance_xray_image(image)
     cache_path.parent.mkdir(parents=True, exist_ok=True)

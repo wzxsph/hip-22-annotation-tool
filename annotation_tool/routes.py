@@ -22,7 +22,7 @@ from .dicom_utils import is_dicom_path
 from .image_io import is_supported_image_path, read_supported_image
 from .measurements import compute_measurements
 from .progress_report import build_progress_payload_from_manifest
-from .render_cache import cached_rendered_png, cached_thumbnail_jpeg, rendered_png_cache_path, thumbnail_cache_path
+from .render_cache import RENDER_CACHE_VERSION, cached_rendered_png, cached_thumbnail_jpeg, rendered_png_cache_path, thumbnail_cache_path
 from .schema import LANDMARK_DEFS, Annotation, Manifest, create_blank_annotation, ensure_keypoint_template, model_to_dict, normalize_split
 from .storage import (
     annotation_path,
@@ -120,13 +120,49 @@ def _apply_image_metadata(annotation: Annotation, metadata: dict) -> Annotation:
 def _image_url_for_path(image_path: Path) -> str:
     stat = image_path.stat()
     filename = quote(image_path.name)
-    return f"/api/annotation/image/{filename}?source_v={stat.st_mtime_ns}-{stat.st_size}"
+    return f"/api/annotation/image/{filename}?source_v={stat.st_mtime_ns}-{stat.st_size}&render_v={RENDER_CACHE_VERSION}"
+
+
+def _path_for_response(path: Path, root: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _trash_destination(path: Path, trash_dir: Path) -> Path:
+    destination = trash_dir / path.name
+    if not destination.exists():
+        return destination
+
+    stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    base = trash_dir / f"{path.stem}_deleted_{stamp}{path.suffix}"
+    destination = base
+    index = 2
+    while destination.exists():
+        destination = trash_dir / f"{path.stem}_deleted_{stamp}_{index}{path.suffix}"
+        index += 1
+    return destination
+
+
+def _move_to_trash(path: Path, root: Path, trash_dir: Path) -> dict[str, str]:
+    destination = _trash_destination(path, trash_dir)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path), str(destination))
+    return {
+        "source": _path_for_response(path, root),
+        "trash_path": _path_for_response(destination, root),
+    }
 
 
 def _split_from_image_path(path: Path) -> str:
     if path.parent.name in {"train", "val"}:
         return path.parent.name
     return "train"
+
+
+def _needs_browser_rendering(path: Path) -> bool:
+    return is_dicom_path(path) or path.suffix.lower() in {".tif", ".tiff"}
 
 
 def _scan_workspace_images(root: Path) -> list[Path]:
@@ -821,7 +857,9 @@ async def delete_image(image_filename: str):
     if image_path is None or not image_path.exists() or not image_path.is_file():
         raise HTTPException(status_code=404, detail="Image not found.")
 
+    trash_dir = image_path.parent / "trash"
     deleted: list[str] = []
+    trashed: list[dict[str, str]] = []
     for cache_path in (
         rendered_png_cache_path(image_path, enhanced=False),
         rendered_png_cache_path(image_path, enhanced=True),
@@ -843,8 +881,7 @@ async def delete_image(image_filename: str):
 
     for candidate in sorted(candidates, key=lambda item: str(item)):
         if candidate.exists() and candidate.is_file():
-            candidate.unlink()
-            deleted.append(str(candidate))
+            trashed.append(_move_to_trash(candidate, root, trash_dir))
 
     manifest = load_manifest(root)
     image_id = image_path.stem
@@ -859,6 +896,8 @@ async def delete_image(image_filename: str):
         "status": "success",
         "filename": filename,
         "deleted": deleted,
+        "trashed": trashed,
+        "trash_dir": _path_for_response(trash_dir, root),
         "progress": build_progress_payload_from_manifest(manifest),
     }
 
@@ -973,7 +1012,7 @@ async def serve_image(image_filename: str, enhanced: bool = False, thumb: bool =
         raise HTTPException(status_code=404, detail="Image not found.")
     if thumb:
         return FileResponse(cached_thumbnail_jpeg(image_path), media_type="image/jpeg")
-    if is_dicom_path(image_path) or enhanced:
+    if _needs_browser_rendering(image_path) or enhanced:
         return FileResponse(cached_rendered_png(image_path, enhanced=enhanced), media_type="image/png")
     return FileResponse(image_path)
 
