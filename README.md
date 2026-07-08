@@ -235,7 +235,7 @@ The UI treats a point as visible only when `visible = true`, `visibility > 0`, a
 | Mouse wheel | Zoom |
 | Space + drag | Pan |
 | Fit / `F` | Recenter and scale the current image to the canvas; in ROI/scan mode it fits the ROI or scan region when available |
-| `←` / `→` | Reserved; does not switch images, to avoid accidental thumbnail/image movement |
+| `←` / `→` | Previous / next image |
 | `Delete` | Mark selected point missing, hide/delete selected connection, or delete the current image when nothing else is selected |
 | `Ctrl+S` | Save |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |

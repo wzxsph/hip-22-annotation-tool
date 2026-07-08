@@ -2318,7 +2318,16 @@ const App = {
   handleKeyDown: (event) => {
     const tag = event.target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || event.target.isContentEditable) return;
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) return;
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key === "ArrowLeft") {
+      event.preventDefault();
+      App.loadAdjacentImage(-1);
+      return;
+    }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key === "ArrowRight") {
+      event.preventDefault();
+      App.loadAdjacentImage(1);
+      return;
+    }
     if (event.code === "Space") {
       event.preventDefault();
       App.state.spaceHeld = true;
