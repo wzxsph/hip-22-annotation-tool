@@ -135,9 +135,9 @@ def _image_url_for_path(image_path: Path) -> str:
 
 def _path_for_response(path: Path, root: Path) -> str:
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def _trash_destination(path: Path, trash_dir: Path) -> Path:

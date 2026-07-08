@@ -69,6 +69,9 @@ $env:HIP22_MODEL_DEVICE = "cpu"
 
 Write-Host "Building Hip22AnnotationTool CPU package..."
 & $PythonExe -m PyInstaller --noconfirm --clean (Join-Path $ProjectRoot "packaging\windows\hip22_windows_cpu.spec")
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller failed with exit code $LASTEXITCODE."
+}
 
 Write-Host ""
 Write-Host "Build complete:"
