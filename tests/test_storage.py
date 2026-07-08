@@ -15,15 +15,17 @@ def test_annotation_round_trip_preserves_template_and_extra_fields(tmp_path):
     point.source = "manual"
     point.confidence = 1.0
     annotation.review["note"] = "checked"
+    annotation.display_settings = {"brightness": 137, "contrast": 88}
 
     save_annotation(annotation, tmp_path)
     loaded = load_annotation("case.png", tmp_path)
 
     assert loaded is not None
-    assert len(loaded.keypoints) == 22
+    assert len(loaded.keypoints) == 24
     assert loaded.keypoints["left_acetabular_outer"].x == 123.4
     assert loaded.keypoints["left_acetabular_outer"].source == "manual"
     assert loaded.review["note"] == "checked"
+    assert loaded.display_settings == {"brightness": 137, "contrast": 88}
 
 
 def test_shenton_round_trip_preserves_more_than_six_curve_points(tmp_path):
@@ -163,7 +165,7 @@ def test_legacy_minimal_point_payload_loads_without_losing_known_fields(tmp_path
     loaded = load_annotation("legacy.png", tmp_path)
 
     assert loaded is not None
-    assert len(loaded.keypoints) == 22
+    assert len(loaded.keypoints) == 24
     point = loaded.keypoints["left_acetabular_outer"]
     assert point.visible is True
     assert point.visibility == 2

@@ -46,7 +46,17 @@ def default_settings() -> dict:
         "auto_detect": True,
         "autosave": True,
         "annotator": "default",
+        "display_brightness": 100,
+        "display_contrast": 100,
     }
+
+
+def _display_percent(value: object, default: int = 100) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(50, min(180, number))
 
 
 def load_settings() -> dict:
@@ -62,19 +72,23 @@ def load_settings() -> dict:
     settings["auto_detect"] = bool(settings.get("auto_detect", True))
     settings["autosave"] = bool(settings.get("autosave", False))
     settings["annotator"] = str(settings.get("annotator") or "default")
+    settings["display_brightness"] = _display_percent(settings.get("display_brightness"), 100)
+    settings["display_contrast"] = _display_percent(settings.get("display_contrast"), 100)
     return settings
 
 
 def save_settings(payload: dict) -> dict:
     with _settings_lock:
         current = load_settings()
-        for key in ("dataset_root", "auto_detect", "autosave", "annotator"):
+        for key in ("dataset_root", "auto_detect", "autosave", "annotator", "display_brightness", "display_contrast"):
             if key in payload:
                 current[key] = payload[key]
         current["dataset_root"] = str(Path(current.get("dataset_root") or ROOT).expanduser().resolve())
         current["auto_detect"] = bool(current.get("auto_detect", True))
         current["autosave"] = bool(current.get("autosave", False))
         current["annotator"] = str(current.get("annotator") or "default")
+        current["display_brightness"] = _display_percent(current.get("display_brightness"), 100)
+        current["display_contrast"] = _display_percent(current.get("display_contrast"), 100)
         _atomic_write_json(settings_path(), current)
     ensure_dataset_layout(Path(current["dataset_root"]))
     return current

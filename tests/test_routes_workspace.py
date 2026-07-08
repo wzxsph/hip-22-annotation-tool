@@ -50,6 +50,27 @@ def test_open_folder_switches_workspace_without_mixing_previous_images(tmp_path)
         save_settings(old_settings)
 
 
+def test_settings_persist_display_adjustments():
+    old_settings = load_settings()
+    client = TestClient(app)
+    try:
+        res = client.post("/api/annotation/settings", json={"display_brightness": 142, "display_contrast": 83})
+
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["display_brightness"] == 142
+        assert payload["display_contrast"] == 83
+        assert load_settings()["display_brightness"] == 142
+        assert load_settings()["display_contrast"] == 83
+
+        clamped = client.post("/api/annotation/settings", json={"display_brightness": 999, "display_contrast": 1})
+        assert clamped.status_code == 200
+        assert clamped.json()["display_brightness"] == 180
+        assert clamped.json()["display_contrast"] == 50
+    finally:
+        save_settings(old_settings)
+
+
 def test_open_folder_marks_full_manual_keypoints_without_confirmation_as_in_progress(tmp_path):
     old_settings = load_settings()
     client = TestClient(app)
@@ -117,6 +138,86 @@ def test_delete_image_moves_files_to_same_folder_trash_and_removes_manifest_entr
         assert all((workspace / item["trash_path"]).parent == trash_dir for item in payload["trashed"])
         assert all((workspace / item["trash_path"]).exists() for item in payload["trashed"])
         assert load_manifest(workspace).images == []
+    finally:
+        save_settings(old_settings)
+
+
+def test_batch_delete_images_moves_each_image_and_reports_missing(tmp_path):
+    old_settings = load_settings()
+    client = TestClient(app)
+    workspace = tmp_path / "workspace"
+    image_dir = workspace / "images" / "train"
+    image_dir.mkdir(parents=True)
+    first = image_dir / "first.png"
+    second = image_dir / "second.png"
+    _write_image(first)
+    _write_image(second)
+    for image_path in (first, second):
+        annotation = create_blank_annotation(image_path.name, 80, 60, annotator="doctor-a")
+        save_annotation(annotation, workspace)
+        upsert_manifest_image(image_path, annotation=annotation, root=workspace)
+        image_path.with_suffix(".txt").write_text("label", encoding="utf-8")
+    try:
+        save_settings({"dataset_root": str(workspace), "auto_detect": False})
+
+        res = client.post("/api/annotation/images/delete", json={"filenames": ["first.png", "second.png", "missing.png"]})
+
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["status"] == "partial"
+        assert payload["deleted_count"] == 2
+        assert payload["failed_count"] == 1
+        assert {item["filename"] for item in payload["results"]} == {"first.png", "second.png"}
+        assert payload["errors"] == [{"filename": "missing.png", "detail": "Image not found."}]
+        assert not first.exists()
+        assert not second.exists()
+        assert (image_dir / "trash" / "first.png").exists()
+        assert (image_dir / "trash" / "second.png").exists()
+        assert load_manifest(workspace).images == []
+    finally:
+        save_settings(old_settings)
+
+
+def test_trash_list_and_restore_image_rebuilds_manifest(tmp_path):
+    old_settings = load_settings()
+    client = TestClient(app)
+    workspace = tmp_path / "workspace"
+    trash_dir = workspace / "images" / "train" / "trash"
+    trash_dir.mkdir(parents=True)
+    image_path = trash_dir / "case.png"
+    _write_image(image_path)
+    annotation = create_blank_annotation("case.png", 80, 60, annotator="doctor-a")
+    (trash_dir / "case.json").write_text(
+        annotation.model_dump_json() if hasattr(annotation, "model_dump_json") else annotation.json(),
+        encoding="utf-8",
+    )
+    (trash_dir / "case.txt").write_text("label", encoding="utf-8")
+    try:
+        save_settings({"dataset_root": str(workspace), "auto_detect": False})
+
+        listed = client.get("/api/annotation/trash")
+
+        assert listed.status_code == 200
+        payload = listed.json()
+        assert payload["total"] == 1
+        assert payload["items"][0]["trash_path"] == "images/train/trash/case.png"
+        assert payload["items"][0]["sidecar_count"] == 2
+
+        restored = client.post("/api/annotation/trash/restore", json={"trash_paths": ["images/train/trash/case.png"]})
+
+        assert restored.status_code == 200
+        restore_payload = restored.json()
+        assert restore_payload["status"] == "success"
+        assert restore_payload["restored_count"] == 1
+        restored_image = workspace / "images" / "train" / "case.png"
+        assert restored_image.exists()
+        assert (workspace / "images" / "train" / "case.json").exists()
+        assert (workspace / "images" / "train" / "case.txt").exists()
+        assert not image_path.exists()
+        manifest = load_manifest(workspace)
+        assert len(manifest.images) == 1
+        assert manifest.images[0].image_path == "images/train/case.png"
+        assert manifest.images[0].status == "pending"
     finally:
         save_settings(old_settings)
 

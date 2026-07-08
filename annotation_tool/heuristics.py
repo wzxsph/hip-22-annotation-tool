@@ -350,7 +350,9 @@ def decode_side11_result(result: Any) -> Dict[str, Keypoint]:
         detection = selected.get(side)
         if detection is None:
             continue
-        for index, landmark in enumerate(LANDMARK_DEFS):
+        # Current bundled model predicts the original 11 landmarks per side.
+        # Newer schema-only landmarks remain missing until manually placed.
+        for index, landmark in enumerate(LANDMARK_DEFS[:11]):
             points = detection["points"]
             point = points[index] if len(points) > index else [0, 0, 0]
             x = float(point[0]) if len(point) > 0 else 0.0

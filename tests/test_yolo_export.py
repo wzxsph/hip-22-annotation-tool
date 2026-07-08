@@ -3,7 +3,7 @@ from annotation_tool.template_points import template_keypoints_for_image
 from annotation_tool.yolo_export import annotation_to_yolo_lines, data_yaml_text
 
 
-def test_yolo_export_emits_11_rows_with_left_right_keypoints():
+def test_yolo_export_emits_12_rows_with_left_right_keypoints():
     annotation = create_blank_annotation("case.png", 1000, 500)
     annotation.keypoints["left_acetabular_outer"] = make_keypoint(
         "left", "acetabular_outer", 600, 200, source="manual", confidence=1
@@ -17,7 +17,7 @@ def test_yolo_export_emits_11_rows_with_left_right_keypoints():
 
     lines = annotation_to_yolo_lines(annotation)
 
-    assert len(lines) == 11
+    assert len(lines) == 12
     first = lines[0].split()
     assert first[0] == "0"
     assert len(first) == 11
@@ -30,7 +30,7 @@ def test_yolo_export_emits_11_rows_with_left_right_keypoints():
     assert second[8:11] == ["0", "0", "0"]
 
 
-def test_data_yaml_matches_11_class_pose_contract():
+def test_data_yaml_matches_12_class_pose_contract():
     text = data_yaml_text(".")
 
     assert "kpt_shape: [2, 3]" in text
@@ -39,6 +39,7 @@ def test_data_yaml_matches_11_class_pose_contract():
     assert "val: ." in text
     assert "0: acetabular_outer" in text
     assert "10: femoral_neck_inner_lower" in text
+    assert "11: femoral_neck_axis_proximal" in text
 
 
 def test_template_guess_points_export_as_valid_yolo_coordinates():
@@ -47,7 +48,7 @@ def test_template_guess_points_export_as_valid_yolo_coordinates():
 
     lines = annotation_to_yolo_lines(annotation)
 
-    assert len(lines) == 11
+    assert len(lines) == 12
     for line in lines:
         values = [float(value) for value in line.split()[1:]]
         for value in values:

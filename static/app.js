@@ -5,18 +5,23 @@ const DEFAULT_LANDMARKS = [
   { number: 4, name: "teardrop_lower", label_zh: "泪滴下缘" },
   { number: 5, name: "femoral_shaft_prox", label_zh: "股骨干轴近端中心" },
   { number: 6, name: "femoral_shaft_dist", label_zh: "股骨干远端中心" },
-  { number: 7, name: "femoral_neck_axis_center", label_zh: "股骨颈轴中心" },
+  { number: 7, name: "femoral_neck_axis_center", label_zh: "股骨颈轴中心远端" },
   { number: 8, name: "femoral_head_medial", label_zh: "股骨头最内侧缘" },
   { number: 9, name: "femoral_head_lateral", label_zh: "股骨头最外侧缘" },
   { number: 10, name: "obturator_upper", label_zh: "闭孔上缘" },
   { number: 11, name: "femoral_neck_inner_lower", label_zh: "股骨颈内下缘" },
+  { number: 12, name: "femoral_neck_axis_proximal", label_zh: "股骨颈轴中心近端" },
 ];
+
+const OPTIONAL_LANDMARK_NUMBERS = new Set([10, 11]);
 
 const DEFAULT_SETTINGS = {
   dataset_root: "annotation-tool",
   auto_detect: true,
   autosave: true,
   annotator: "default",
+  display_brightness: 100,
+  display_contrast: 100,
 };
 
 const SCAN_CORNER_LABELS = ["左上", "右上", "右下", "左下"];
@@ -28,7 +33,8 @@ const App = {
     settings: { ...DEFAULT_SETTINGS },
     image: null,
     imageBaseUrl: "",
-    imageView: "enhanced",
+    imageView: "original",
+    displayAdjustments: { brightness: 100, contrast: 100 },
     annotation: null,
     currentFilename: null,
     transform: { x: 0, y: 0, scale: 1 },
@@ -44,6 +50,9 @@ const App = {
     isDraggingScanCorner: false,
     isDrawingRoi: false,
     isPanning: false,
+    isAdjustingDisplay: false,
+    displayDragStart: null,
+    displayDragInitial: null,
     dragStarted: false,
     spaceHeld: false,
     showLabels: true,
@@ -68,11 +77,16 @@ const App = {
     lastSavedSnapshot: "",
     manifestByFilename: new Map(),
     thumbByFilename: new Map(),
+    selectedThumbs: new Set(),
+    trashItems: [],
+    trashSelected: new Set(),
+    skipImageDeleteConfirm: false,
     autosaveTimer: null,
     measurementTimer: null,
     thumbObserver: null,
     autoDetectPollTimer: null,
     autoDetectStatus: null,
+    displaySettingsTimer: null,
     isNavigating: false,
   },
 
@@ -83,6 +97,7 @@ const App = {
     App.bindEvents();
     App.setTool("select");
     App.updateSettingsPanel();
+    App.syncDisplayAdjustmentControls();
     App.resize();
     window.addEventListener("resize", App.resize);
     requestAnimationFrame(App.drawLoop);
@@ -95,6 +110,7 @@ const App = {
       const res = await fetch("/api/annotation/settings");
       if (res.ok) {
         App.state.settings = { ...DEFAULT_SETTINGS, ...(await App.readJsonResponse(res, "settings failed")) };
+        App.applyDisplaySettings(App.state.settings);
       }
     } catch (err) {
       console.warn("Settings fallback", err);
@@ -106,6 +122,8 @@ const App = {
       auto_detect: document.getElementById("autoDetectToggle").checked,
       autosave: document.getElementById("autoSaveToggle").checked,
       annotator: document.getElementById("annotatorInput").value.trim() || "default",
+      display_brightness: App.state.displayAdjustments.brightness,
+      display_contrast: App.state.displayAdjustments.contrast,
     };
     try {
       const res = await fetch("/api/annotation/settings", {
@@ -124,6 +142,7 @@ const App = {
     document.getElementById("autoDetectToggle").checked = Boolean(App.state.settings.auto_detect);
     document.getElementById("autoSaveToggle").checked = Boolean(App.state.settings.autosave);
     document.getElementById("datasetRootText").textContent = App.state.settings.dataset_root || "annotation-tool";
+    if (!App.state.annotation) App.applyDisplaySettings(App.state.settings);
     App.renderAutoDetectStatus();
     if (!App.state.annotation) {
       document.getElementById("annotatorInput").value = App.state.settings.annotator || "default";
@@ -151,6 +170,9 @@ const App = {
     document.getElementById("btnSave").addEventListener("click", () => App.saveAnnotation());
     document.getElementById("btnClearPoints").addEventListener("click", App.clearCurrentImagePoints);
     document.getElementById("btnDeleteImage").addEventListener("click", App.deleteCurrentImage);
+    document.getElementById("btnDeleteSelectedImages").addEventListener("click", App.deleteSelectedImages);
+    document.getElementById("btnRestoreImages").addEventListener("click", App.openRestoreDialog);
+    document.getElementById("btnConfirmRestore").addEventListener("click", App.restoreSelectedImages);
     document.getElementById("btnConfirmKeypointsComplete").addEventListener("click", App.confirmKeypointsComplete);
     document.getElementById("btnConfirmShentonComplete").addEventListener("click", App.confirmShentonComplete);
     document.getElementById("btnAutoDetect").addEventListener("click", App.handleAutoDetectCurrent);
@@ -188,6 +210,16 @@ const App = {
     document.getElementById("showPoint10And11Toggle").addEventListener("change", (event) => {
       App.state.showPoint10And11 = event.target.checked;
     });
+    document.getElementById("brightnessSlider").addEventListener("input", (event) => {
+      App.setDisplayAdjustment("brightness", event.target.value);
+    });
+    document.getElementById("contrastSlider").addEventListener("input", (event) => {
+      App.setDisplayAdjustment("contrast", event.target.value);
+    });
+    document.getElementById("btnResetDisplayAdjustments").addEventListener("click", App.resetDisplayAdjustments);
+    document.getElementById("displayAdjustPad")?.addEventListener("mousedown", App.startDisplayAdjustDrag);
+    document.addEventListener("mousemove", App.handleDisplayAdjustMove);
+    document.addEventListener("mouseup", App.endDisplayAdjustDrag);
     document.querySelectorAll("[data-image-view]").forEach((button) => {
       button.addEventListener("click", () => App.setImageView(button.dataset.imageView || "original"));
     });
@@ -240,6 +272,9 @@ const App = {
   },
 
   showShortcuts: () => {
+    App.renderSaveInfo();
+    App.renderImportReport();
+    App.renderProgressSummary();
     const dialog = document.getElementById("shortcutsDialog");
     if (dialog?.showModal) dialog.showModal();
   },
@@ -256,13 +291,16 @@ const App = {
       group.appendChild(title);
       App.state.schema.landmarks.forEach((landmark) => {
         const key = App.keyFor(side, landmark.name);
+        const optionalTag = OPTIONAL_LANDMARK_NUMBERS.has(Number(landmark.number))
+          ? '<small class="optional-point-tag">可选</small>'
+          : "";
         const row = document.createElement("div");
         row.className = "point-row missing";
         row.dataset.key = key;
         row.innerHTML = `
           <span class="point-number">#${landmark.number}</span>
           <input type="checkbox" aria-label="visible" />
-          <span class="point-name">${landmark.label_zh}</span>
+          <span class="point-name">${landmark.label_zh}${optionalTag}</span>
           <span class="source-badge missing">缺失</span>
         `;
         row.addEventListener("click", (event) => {
@@ -470,6 +508,8 @@ const App = {
       const data = await App.readJsonResponse(res, "manifest failed");
       App.state.manifestImages = data.images || [];
       App.state.manifestByFilename = new Map(App.state.manifestImages.map((item) => [App.imageFilename(item), item]));
+      const manifestFilenames = new Set(App.state.manifestImages.map((item) => App.imageFilename(item)).filter(Boolean));
+      App.state.selectedThumbs = new Set([...App.state.selectedThumbs].filter((filename) => manifestFilenames.has(filename)));
       App.state.progress = data.progress || null;
       App.state.autoDetectStatus = data.auto_detect || App.state.autoDetectStatus;
       if (data.settings) {
@@ -477,6 +517,7 @@ const App = {
         App.updateSettingsPanel();
       }
       App.renderThumbnails();
+      App.renderBatchControls();
       App.renderAutoDetectStatus();
       App.renderProgressSummary();
     } catch (err) {
@@ -490,6 +531,7 @@ const App = {
       button.classList.toggle("active", button.dataset.statusFilter === App.state.statusFilter);
     });
     App.renderThumbnails();
+    App.renderBatchControls();
   },
 
   progressCounts: () => {
@@ -566,11 +608,13 @@ const App = {
     const target = document.getElementById("saveInfoText");
     if (!target) return;
     if (!App.state.currentFilename) {
-      target.textContent = "尚未打开当前图片";
+      target.textContent = "当前图片修改后开启自动保存会自动保存；手动保存会写入 JSON 和同名 YOLO txt。";
       return;
     }
     if (!App.state.lastSave || App.state.lastSave.filename !== App.state.currentFilename) {
-      target.textContent = "当前图片修改后请保存；保存会写入 JSON 和同名 YOLO txt";
+      target.textContent = App.state.settings.autosave
+        ? "当前图片修改后开启自动保存会自动保存；保存会写入 JSON 和同名 YOLO txt。"
+        : "当前图片修改后请手动保存；保存会写入 JSON 和同名 YOLO txt。";
       return;
     }
     target.textContent = `最近保存 ${App.state.lastSave.timeText}；JSON：${App.state.lastSave.annotationPath}；TXT：${App.state.lastSave.labelPath}`;
@@ -623,17 +667,32 @@ const App = {
       return;
     }
     images.forEach((item, index) => {
-      const filename = item.image_path.split("/").pop();
+      const filename = App.imageFilename(item);
       const thumb = document.createElement("button");
       thumb.type = "button";
-      thumb.className = `thumb loading ${filename === App.state.currentFilename ? "active" : ""}`;
+      thumb.className = [
+        "thumb",
+        "loading",
+        filename === App.state.currentFilename ? "active" : "",
+        App.state.selectedThumbs.has(filename) ? "selected" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
       thumb.dataset.filename = filename;
       thumb.title = App.manifestStatusTitle(item);
       thumb.innerHTML = `
+        <span class="thumb-check" title="勾选用于批量删除">${App.state.selectedThumbs.has(filename) ? "✓" : ""}</span>
         <span class="thumb-status ${item.status || "pending"}"></span>
         <span class="thumb-label">${App.statusShortLabel(item.status)}</span>
       `;
-      thumb.addEventListener("click", () => App.loadByName(filename));
+      thumb.addEventListener("click", (event) => {
+        if (event.target.closest(".thumb-check")) {
+          event.preventDefault();
+          App.toggleThumbnailSelection(filename);
+          return;
+        }
+        App.loadByName(filename);
+      });
       strip.appendChild(thumb);
       App.state.thumbByFilename.set(filename, thumb);
       if (App.state.thumbObserver) {
@@ -642,6 +701,29 @@ const App = {
         App.loadThumbnail(thumb);
       }
     });
+    App.renderBatchControls();
+  },
+
+  renderBatchControls: () => {
+    const deleteButton = document.getElementById("btnDeleteSelectedImages");
+    if (!deleteButton) return;
+    const count = App.state.selectedThumbs.size;
+    deleteButton.textContent = count ? `删除所选 ${count}` : "删除所选";
+    deleteButton.disabled = count === 0;
+  },
+
+  toggleThumbnailSelection: (filename, selected = null) => {
+    if (!filename) return;
+    const shouldSelect = selected === null ? !App.state.selectedThumbs.has(filename) : Boolean(selected);
+    if (shouldSelect) App.state.selectedThumbs.add(filename);
+    else App.state.selectedThumbs.delete(filename);
+    const thumb = App.state.thumbByFilename.get(filename);
+    if (thumb) {
+      thumb.classList.toggle("selected", shouldSelect);
+      const check = thumb.querySelector(".thumb-check");
+      if (check) check.textContent = shouldSelect ? "✓" : "";
+    }
+    App.renderBatchControls();
   },
 
   filteredManifestImages: () => {
@@ -789,13 +871,67 @@ const App = {
     }
   },
 
+  confirmImageDelete: (message) => {
+    if (App.state.skipImageDeleteConfirm) return Promise.resolve(true);
+    const dialog = document.getElementById("deleteImageDialog");
+    const messageTarget = document.getElementById("deleteImageMessage");
+    const skipToggle = document.getElementById("skipDeleteConfirmToggle");
+    if (!dialog || typeof dialog.showModal !== "function") {
+      return Promise.resolve(window.confirm(message));
+    }
+    messageTarget.textContent = message;
+    skipToggle.checked = false;
+    dialog.returnValue = "";
+    return new Promise((resolve) => {
+      const handleClose = () => {
+        const confirmed = dialog.returnValue === "confirm";
+        if (confirmed && skipToggle.checked) App.state.skipImageDeleteConfirm = true;
+        resolve(confirmed);
+      };
+      dialog.addEventListener("close", handleClose, { once: true });
+      dialog.showModal();
+    });
+  },
+
+  clearCurrentImageState: () => {
+    App.state.annotation = null;
+    App.state.currentFilename = null;
+    App.state.image = null;
+    App.state.imageBaseUrl = "";
+    App.state.lastSave = null;
+    App.state.lastSavedSnapshot = "";
+    App.state.selectedPoint = null;
+    App.state.selectedShentonPoint = null;
+    App.state.selectedConnection = null;
+    App.state.selectedScanCorner = null;
+    document.getElementById("imageTitle").textContent = "未打开图像";
+    document.getElementById("warningList").innerHTML = "";
+    App.updateSelectedBox();
+    App.renderSaveInfo();
+  },
+
+  openNextAfterDeleted: async (imagesBeforeDelete, deletedFilenames, preferredIndex, emptyMessage) => {
+    const deleted = new Set(deletedFilenames);
+    await App.loadManifest();
+    const remaining = App.state.manifestImages || imagesBeforeDelete.filter((item) => !deleted.has(App.imageFilename(item)));
+    const nextItem = remaining[Math.min(Math.max(preferredIndex, 0), Math.max(remaining.length - 1, 0))];
+    App.clearCurrentImageState();
+    if (nextItem) {
+      await App.loadByName(App.imageFilename(nextItem), { skipManifest: true });
+      return true;
+    }
+    App.clearWorkspaceView(emptyMessage);
+    await App.loadManifest();
+    return false;
+  },
+
   deleteCurrentImage: async () => {
     const filename = App.state.currentFilename;
     if (!filename) {
       App.setStatus("请先打开一张图片");
       return;
     }
-    const confirmed = window.confirm(
+    const confirmed = await App.confirmImageDelete(
       `确认从当前列表移除这张图片吗？\n\n${filename}\n\n图片、同名标注 JSON 和 YOLO txt 会移动到图片同目录的 trash 文件夹，缓存预览会清理。`,
     );
     if (!confirmed) return;
@@ -806,24 +942,131 @@ const App = {
     try {
       const res = await fetch(`/api/annotation/image/${encodeURIComponent(filename)}`, { method: "DELETE" });
       await App.readJsonResponse(res, "delete image failed");
-      await App.loadManifest();
-      const remaining = App.state.manifestImages || imagesBeforeDelete.filter((item) => App.imageFilename(item) !== filename);
-      const nextItem = remaining[Math.min(Math.max(currentIndex, 0), Math.max(remaining.length - 1, 0))];
-      App.state.annotation = null;
-      App.state.currentFilename = null;
-      App.state.image = null;
-      App.state.imageBaseUrl = "";
-      App.state.lastSave = null;
-      App.state.lastSavedSnapshot = "";
-      if (nextItem) {
-        await App.loadByName(App.imageFilename(nextItem), { skipManifest: true });
-        App.setStatus("已移动当前图片到 trash，并打开下一张");
-      } else {
-        App.clearWorkspaceView("已移动当前图片到 trash，当前文件夹没有更多图片");
-        await App.loadManifest();
-      }
+      App.state.selectedThumbs.delete(filename);
+      const openedNext = await App.openNextAfterDeleted(
+        imagesBeforeDelete,
+        [filename],
+        currentIndex,
+        "已移动当前图片到 trash，当前文件夹没有更多图片",
+      );
+      App.setStatus(openedNext ? "已移动当前图片到 trash，并打开下一张" : "已移动当前图片到 trash，当前文件夹没有更多图片");
     } catch (err) {
       App.setStatus(`删除失败: ${err.message}`);
+    }
+  },
+
+  deleteSelectedImages: async () => {
+    const filenames = [...App.state.selectedThumbs].filter((filename) => App.state.manifestByFilename.has(filename));
+    if (!filenames.length) {
+      App.setStatus("请先勾选要删除的缩略图");
+      return;
+    }
+    const confirmed = await App.confirmImageDelete(
+      `确认批量移除 ${filenames.length} 张图片吗？\n\n图片和同名标注文件会移动到各自图片同目录的 trash 文件夹。`,
+    );
+    if (!confirmed) return;
+
+    const imagesBeforeDelete = App.state.manifestImages || [];
+    const currentIndex = App.currentManifestIndex();
+    App.setStatus(`正在移动 ${filenames.length} 张图片到 trash...`);
+    try {
+      const res = await fetch("/api/annotation/images/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filenames }),
+      });
+      const payload = await App.readJsonResponse(res, "batch delete images failed");
+      const deleted = (payload.results || []).map((item) => item.filename);
+      deleted.forEach((filename) => App.state.selectedThumbs.delete(filename));
+      if (deleted.includes(App.state.currentFilename)) {
+        const openedNext = await App.openNextAfterDeleted(
+          imagesBeforeDelete,
+          deleted,
+          currentIndex,
+          "已移动所选图片到 trash，当前文件夹没有更多图片",
+        );
+        App.setStatus(openedNext ? `已删除 ${deleted.length} 张，并打开下一张` : `已删除 ${deleted.length} 张`);
+      } else {
+        await App.loadManifest();
+        App.setActiveThumbnail(App.state.currentFilename);
+        App.setStatus(`已删除 ${deleted.length} 张${payload.failed_count ? `，${payload.failed_count} 张失败` : ""}`);
+      }
+    } catch (err) {
+      App.setStatus(`批量删除失败: ${err.message}`);
+    }
+  },
+
+  openRestoreDialog: async () => {
+    App.setStatus("正在扫描 trash...");
+    try {
+      const res = await fetch("/api/annotation/trash");
+      const payload = await App.readJsonResponse(res, "list trash failed");
+      App.state.trashItems = payload.items || [];
+      App.state.trashSelected = new Set();
+      App.renderRestoreList();
+      const dialog = document.getElementById("restoreDialog");
+      if (dialog && typeof dialog.showModal === "function") dialog.showModal();
+      App.setStatus(App.state.trashItems.length ? `找到 ${App.state.trashItems.length} 张可还原图片` : "trash 中没有可还原图片");
+    } catch (err) {
+      App.setStatus(`扫描 trash 失败: ${err.message}`);
+    }
+  },
+
+  renderRestoreList: () => {
+    const list = document.getElementById("restoreList");
+    const empty = document.getElementById("restoreEmpty");
+    const button = document.getElementById("btnConfirmRestore");
+    if (!list || !empty || !button) return;
+    list.innerHTML = "";
+    empty.hidden = App.state.trashItems.length > 0;
+    App.state.trashItems.forEach((item) => {
+      const row = document.createElement("label");
+      row.className = "restore-row";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = App.state.trashSelected.has(item.trash_path);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) App.state.trashSelected.add(item.trash_path);
+        else App.state.trashSelected.delete(item.trash_path);
+        App.renderRestoreList();
+      });
+      const text = document.createElement("span");
+      const filename = document.createElement("strong");
+      filename.textContent = item.filename;
+      const path = document.createElement("small");
+      path.textContent = `${item.trash_path} -> ${item.restore_dir}${item.sidecar_count ? `；同名标注 ${item.sidecar_count} 个` : ""}`;
+      text.append(filename, path);
+      row.append(checkbox, text);
+      list.appendChild(row);
+    });
+    const count = App.state.trashSelected.size;
+    button.textContent = count ? `还原所选 ${count}` : "还原所选";
+    button.disabled = count === 0;
+  },
+
+  restoreSelectedImages: async () => {
+    const trashPaths = [...App.state.trashSelected];
+    if (!trashPaths.length) {
+      App.setStatus("请先勾选要还原的图片");
+      return;
+    }
+    App.setStatus(`正在还原 ${trashPaths.length} 张图片...`);
+    try {
+      const res = await fetch("/api/annotation/trash/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trash_paths: trashPaths }),
+      });
+      const payload = await App.readJsonResponse(res, "restore trash images failed");
+      document.getElementById("restoreDialog")?.close();
+      App.state.trashSelected = new Set();
+      await App.loadManifest();
+      if (!App.state.currentFilename && payload.results?.[0]?.filename) {
+        await App.loadByName(payload.results[0].filename, { skipManifest: true });
+      }
+      App.setStatus(`已还原 ${payload.restored_count || 0} 张${payload.failed_count ? `，${payload.failed_count} 张失败` : ""}`);
+    } catch (err) {
+      App.setStatus(`还原失败: ${err.message}`);
     }
   },
 
@@ -834,7 +1077,16 @@ const App = {
 
   visibleKeypointCount: () => {
     if (!App.state.annotation) return 0;
-    return Object.values(App.state.annotation.keypoints || {}).filter((point) => App.pointIsVisible(point)).length;
+    return Object.values(App.state.annotation.keypoints || {}).filter(
+      (point) => App.pointIsVisible(point) && !App.isOptionalPoint(point),
+    ).length;
+  },
+
+  optionalVisibleKeypointCount: () => {
+    if (!App.state.annotation) return 0;
+    return Object.values(App.state.annotation.keypoints || {}).filter(
+      (point) => App.pointIsVisible(point) && App.isOptionalPoint(point),
+    ).length;
   },
 
   confirmKeypointsComplete: async () => {
@@ -843,11 +1095,13 @@ const App = {
       return;
     }
     const visible = App.visibleKeypointCount();
-    const missing = Math.max(0, 22 - visible);
+    const optionalVisible = App.optionalVisibleKeypointCount();
+    const optionalTotal = App.optionalKeypoints();
+    const missing = Math.max(0, App.requiredKeypoints() - visible);
     const message =
       missing > 0
-        ? `当前还有 ${missing} 个关键点缺失。\n\n仍要人工确认本图关键点已完成吗？`
-        : "确认本图关键点已经人工复核完成吗？";
+        ? `当前还有 ${missing} 个必标关键点缺失。\n#10/#11 为可选点，不计入缺失。\n\n仍要人工确认本图关键点已完成吗？`
+        : `确认本图关键点已经人工复核完成吗？\n#10/#11 可选点已标 ${optionalVisible}/${optionalTotal}。`;
     if (!window.confirm(message)) return;
     App.pushHistory();
     App.state.annotation.review = App.state.annotation.review || {};
@@ -855,6 +1109,8 @@ const App = {
       status: "confirmed",
       visible_count: visible,
       missing_count: missing,
+      optional_visible_count: optionalVisible,
+      optional_missing_count: Math.max(0, optionalTotal - optionalVisible),
       updated_at: new Date().toISOString(),
       annotator: document.getElementById("annotatorInput")?.value?.trim() || "default",
     };
@@ -920,7 +1176,7 @@ const App = {
   clearWorkspaceView: (message = "未打开图像") => {
     App.state.image = null;
     App.state.imageBaseUrl = "";
-    App.state.imageView = "enhanced";
+    App.state.imageView = "original";
     App.state.annotation = null;
     App.state.currentFilename = null;
     App.state.selectedPoint = null;
@@ -936,6 +1192,7 @@ const App = {
     App.state.lastSavedSnapshot = "";
     App.state.manifestByFilename = new Map();
     App.state.thumbByFilename = new Map();
+    App.state.selectedThumbs = new Set();
     App.state.history = [];
     App.state.historyIndex = -1;
     App.state.transform = { x: 0, y: 0, scale: 1 };
@@ -947,6 +1204,8 @@ const App = {
     App.renderShentonPanel();
     App.renderMeasurements();
     App.syncDisplayToggles();
+    App.syncImageViewButtons();
+    App.renderBatchControls();
     document.getElementById("selectedConnectionLabel").textContent = "未选中连线";
     document.querySelectorAll(".point-row").forEach((row) => {
       row.classList.add("missing");
@@ -1022,12 +1281,16 @@ const App = {
     ["left_femoral_shaft_prox", "left_femoral_shaft_dist"],
     ["left_femoral_head_medial", "left_femoral_head_center"],
     ["left_femoral_head_center", "left_femoral_head_lateral"],
+    ["left_femoral_head_medial", "left_femoral_head_lateral"],
     ["left_femoral_head_center", "left_femoral_neck_axis_center"],
+    ["left_femoral_neck_axis_proximal", "left_femoral_neck_axis_center"],
     ["left_acetabular_outer", "left_triradiate_center"],
     ["right_femoral_shaft_prox", "right_femoral_shaft_dist"],
     ["right_femoral_head_medial", "right_femoral_head_center"],
     ["right_femoral_head_center", "right_femoral_head_lateral"],
+    ["right_femoral_head_medial", "right_femoral_head_lateral"],
     ["right_femoral_head_center", "right_femoral_neck_axis_center"],
+    ["right_femoral_neck_axis_proximal", "right_femoral_neck_axis_center"],
     ["right_acetabular_outer", "right_triradiate_center"],
     ["left_triradiate_center", "right_triradiate_center"],
   ],
@@ -1061,7 +1324,9 @@ const App = {
     App.normalizeShenton(annotation);
     App.normalizeRoiCrop(annotation);
     App.normalizeScanTransform(annotation);
+    App.normalizeDisplaySettings(annotation);
     App.state.annotation = annotation;
+    App.applyDisplaySettings(annotation.display_settings);
     App.state.currentFilename = annotation.image.filename;
     App.state.lastSavedSnapshot = App.annotationSnapshot(annotation);
     App.state.selectedPoint = null;
@@ -1071,7 +1336,7 @@ const App = {
     App.state.pendingConnectionStart = null;
     App.state.activePointKey = "left_acetabular_outer";
     App.state.lastSave = null;
-    App.state.imageView = "enhanced";
+    App.state.imageView = "original";
     App.state.roiStart = null;
     App.state.roiDraft = null;
     App.state.imageBaseUrl = annotation.image_url || `/api/annotation/image/${encodeURIComponent(annotation.image.filename)}`;
@@ -1118,6 +1383,105 @@ const App = {
     document.querySelectorAll("[data-image-view]").forEach((button) => {
       button.classList.toggle("active", button.dataset.imageView === App.state.imageView);
     });
+  },
+
+  setDisplayAdjustment: (key, value) => {
+    const next = App.clamp(Number(value) || 100, 50, 180);
+    App.state.displayAdjustments[key] = next;
+    App.syncCurrentAnnotationDisplaySettings();
+    App.syncDisplayAdjustmentControls();
+    App.scheduleDisplaySettingsSave();
+    App.scheduleAutosave();
+  },
+
+  resetDisplayAdjustments: () => {
+    App.state.displayAdjustments = { brightness: 100, contrast: 100 };
+    App.syncCurrentAnnotationDisplaySettings();
+    App.syncDisplayAdjustmentControls();
+    App.scheduleDisplaySettingsSave();
+    App.scheduleAutosave();
+  },
+
+  applyDisplaySettings: (settings) => {
+    App.state.displayAdjustments = {
+      brightness: App.displayPercent(settings?.brightness ?? settings?.display_brightness),
+      contrast: App.displayPercent(settings?.contrast ?? settings?.display_contrast),
+    };
+    App.syncDisplayAdjustmentControls();
+  },
+
+  displayPercent: (value) => App.clamp(Number(value) || 100, 50, 180),
+
+  normalizeDisplaySettings: (annotation) => {
+    const current = annotation.display_settings && typeof annotation.display_settings === "object" ? annotation.display_settings : {};
+    annotation.display_settings = {
+      brightness: App.displayPercent(current.brightness ?? current.display_brightness ?? App.state.settings.display_brightness),
+      contrast: App.displayPercent(current.contrast ?? current.display_contrast ?? App.state.settings.display_contrast),
+    };
+  },
+
+  syncCurrentAnnotationDisplaySettings: () => {
+    if (!App.state.annotation) return;
+    App.state.annotation.display_settings = {
+      brightness: App.state.displayAdjustments.brightness,
+      contrast: App.state.displayAdjustments.contrast,
+    };
+  },
+
+  scheduleDisplaySettingsSave: () => {
+    clearTimeout(App.state.displaySettingsTimer);
+    App.state.displaySettingsTimer = setTimeout(() => App.saveSettings(), 350);
+  },
+
+  syncDisplayAdjustmentControls: () => {
+    const brightness = App.state.displayAdjustments.brightness;
+    const contrast = App.state.displayAdjustments.contrast;
+    const brightnessSlider = document.getElementById("brightnessSlider");
+    const contrastSlider = document.getElementById("contrastSlider");
+    const brightnessValue = document.getElementById("brightnessValue");
+    const contrastValue = document.getElementById("contrastValue");
+    if (brightnessSlider) brightnessSlider.value = brightness;
+    if (contrastSlider) contrastSlider.value = contrast;
+    if (brightnessValue) brightnessValue.textContent = `${brightness}%`;
+    if (contrastValue) contrastValue.textContent = `${contrast}%`;
+    const sideBrightness = document.getElementById("sideBrightnessValue");
+    const sideContrast = document.getElementById("sideContrastValue");
+    if (sideBrightness) sideBrightness.textContent = `${brightness}%`;
+    if (sideContrast) sideContrast.textContent = `${contrast}%`;
+    const pad = document.getElementById("displayAdjustPad");
+    if (pad) {
+      const x = App.clamp(((contrast - 50) / 130) * 100, 0, 100);
+      const y = App.clamp(100 - ((brightness - 50) / 130) * 100, 0, 100);
+      pad.style.setProperty("--adjust-x", `${x}%`);
+      pad.style.setProperty("--adjust-y", `${y}%`);
+    }
+  },
+
+  startDisplayAdjustDrag: (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    App.state.isAdjustingDisplay = true;
+    App.state.displayDragStart = { x: event.clientX, y: event.clientY };
+    App.state.displayDragInitial = { ...App.state.displayAdjustments };
+    document.getElementById("displayAdjustPad")?.classList.add("dragging");
+  },
+
+  handleDisplayAdjustMove: (event) => {
+    if (!App.state.isAdjustingDisplay || !App.state.displayDragStart || !App.state.displayDragInitial) return;
+    const dx = event.clientX - App.state.displayDragStart.x;
+    const dy = event.clientY - App.state.displayDragStart.y;
+    const contrast = App.state.displayDragInitial.contrast + Math.round(dx * 0.8);
+    const brightness = App.state.displayDragInitial.brightness - Math.round(dy * 0.8);
+    App.setDisplayAdjustment("contrast", contrast);
+    App.setDisplayAdjustment("brightness", brightness);
+  },
+
+  endDisplayAdjustDrag: () => {
+    if (!App.state.isAdjustingDisplay) return;
+    App.state.isAdjustingDisplay = false;
+    App.state.displayDragStart = null;
+    App.state.displayDragInitial = null;
+    document.getElementById("displayAdjustPad")?.classList.remove("dragging");
   },
 
   normalizeRoiCrop: (annotation) => {
@@ -1445,6 +1809,8 @@ const App = {
     }
     App.normalizeRoiCrop(App.state.annotation);
     App.normalizeScanTransform(App.state.annotation);
+    App.syncCurrentAnnotationDisplaySettings();
+    App.normalizeDisplaySettings(App.state.annotation);
     const snapshot = App.annotationSnapshot();
     if (options.silent && snapshot === App.state.lastSavedSnapshot) {
       return true;
@@ -1952,16 +2318,7 @@ const App = {
   handleKeyDown: (event) => {
     const tag = event.target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || event.target.isContentEditable) return;
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key === "ArrowLeft") {
-      event.preventDefault();
-      App.loadAdjacentImage(-1);
-      return;
-    }
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key === "ArrowRight") {
-      event.preventDefault();
-      App.loadAdjacentImage(1);
-      return;
-    }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) return;
     if (event.code === "Space") {
       event.preventDefault();
       App.state.spaceHeld = true;
@@ -1983,10 +2340,13 @@ const App = {
       return;
     }
     if (event.key === "Delete") {
+      event.preventDefault();
       if (App.state.selectedConnection) App.deleteSelectedConnection();
       else if (App.state.selectedShentonPoint) App.deleteSelectedShentonPoint();
       else if (App.state.selectedScanCorner !== null) App.deleteSelectedScanCorner();
       else if (App.state.selectedPoint) App.markMissing(App.state.selectedPoint);
+      else App.deleteCurrentImage();
+      return;
     }
     if (event.key === "Escape") {
       App.state.pendingConnectionStart = null;
@@ -2390,7 +2750,10 @@ const App = {
 
     ctx.translate(App.state.transform.x, App.state.transform.y);
     ctx.scale(App.state.transform.scale, App.state.transform.scale);
+    ctx.save();
+    ctx.filter = `brightness(${App.state.displayAdjustments.brightness}%) contrast(${App.state.displayAdjustments.contrast}%)`;
     ctx.drawImage(App.state.image, 0, 0);
+    ctx.restore();
     App.drawRoiCrop(ctx);
     App.drawScanTransform(ctx);
     App.drawConnections(ctx);
@@ -2578,11 +2941,11 @@ const App = {
       const color = point.side === "left" ? "#d9480f" : "#1c7ed6";
       const pending = key === App.state.pendingConnectionStart;
       ctx.beginPath();
-      ctx.arc(point.x, point.y, (pending ? 7 : 5.2) * inv, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, (pending ? 3.6 : 2.6) * inv, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
-      ctx.lineWidth = (pending || key === App.state.selectedPoint ? 3 : 2) * inv;
-      ctx.strokeStyle = pending || key === App.state.selectedPoint ? "#ffffff" : App.sourceColor(point.source);
+      ctx.lineWidth = (pending || key === App.state.selectedPoint ? 1.6 : 1) * inv;
+      ctx.strokeStyle = pending || key === App.state.selectedPoint ? "rgba(255,255,255,0.65)" : App.sourceColor(point.source);
       ctx.stroke();
       if (App.state.showLabels) {
         ctx.font = `${12 * inv}px sans-serif`;
@@ -2661,19 +3024,25 @@ const App = {
     source === "pose11_side",
 
   updateSummary: () => {
-    const counts = { model: 0, estimated: 0, manual: 0, missing: 0 };
+    const counts = { model: 0, estimated: 0, manual: 0, missing: 0, optionalVisible: 0 };
     if (!App.state.annotation) {
-      counts.missing = 22;
+      counts.missing = App.requiredKeypoints();
     } else {
       Object.values(App.state.annotation.keypoints).forEach((point) => {
-        if (!App.pointIsVisible(point)) counts.missing += 1;
+        const visible = App.pointIsVisible(point);
+        if (App.isOptionalPoint(point)) {
+          if (visible) counts.optionalVisible += 1;
+          return;
+        }
+        if (!visible) counts.missing += 1;
         else if (point.source === "retuve" || point.source === "pose11_side") counts.model += 1;
         else if (point.source === "manual") counts.manual += 1;
         else counts.estimated += 1;
       });
     }
-    const complete = 22 - counts.missing;
-    document.getElementById("completionText").textContent = `${complete} / 22`;
+    const total = App.requiredKeypoints();
+    const complete = total - counts.missing;
+    document.getElementById("completionText").textContent = `${complete} / ${total} 必标`;
     document.getElementById("countModel").textContent = counts.model;
     document.getElementById("countEstimated").textContent = counts.estimated;
     document.getElementById("countManual").textContent = counts.manual;
@@ -2698,8 +3067,34 @@ const App = {
       return;
     }
     const visible = App.visibleKeypointCount();
-    text.textContent = visible >= 22 ? "22 个关键点已齐，等待人工确认完成" : `已标 ${visible}/22，未完成`;
+    const optionalVisible = App.optionalVisibleKeypointCount();
+    const optionalTotal = App.optionalKeypoints();
+    const total = App.requiredKeypoints();
+    text.textContent =
+      visible >= total
+        ? `${total} 个必标点已齐，#10/#11 可选（已标 ${optionalVisible}/${optionalTotal}）`
+        : `必标点已标 ${visible}/${total}，#10/#11 可选`;
   },
+
+  totalKeypoints: () => {
+    const landmarks = App.state.schema?.landmarks || DEFAULT_LANDMARKS;
+    const sides = App.state.schema?.sides || ["left", "right"];
+    return landmarks.length * sides.length;
+  },
+
+  requiredKeypoints: () => {
+    const landmarks = App.state.schema?.landmarks || DEFAULT_LANDMARKS;
+    const sides = App.state.schema?.sides || ["left", "right"];
+    return landmarks.filter((landmark) => !OPTIONAL_LANDMARK_NUMBERS.has(Number(landmark.number))).length * sides.length;
+  },
+
+  optionalKeypoints: () => {
+    const landmarks = App.state.schema?.landmarks || DEFAULT_LANDMARKS;
+    const sides = App.state.schema?.sides || ["left", "right"];
+    return landmarks.filter((landmark) => OPTIONAL_LANDMARK_NUMBERS.has(Number(landmark.number))).length * sides.length;
+  },
+
+  isOptionalPoint: (point) => OPTIONAL_LANDMARK_NUMBERS.has(Number(point?.number)),
 
   renderShentonConfirmation: () => {
     const text = document.getElementById("shentonConfirmText");

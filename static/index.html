@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>22 点髋关节 X 光标注</title>
-    <link rel="stylesheet" href="/static/style.css?v=streamlined-display" />
+    <title>24 点髋关节 X 光标注</title>
+    <link rel="stylesheet" href="/static/style.css?v=hip24-optional-10-11" />
   </head>
   <body>
     <main class="app-shell">
       <header class="topbar">
         <div class="brand">
-          <p>hip-22-point-annotator</p>
-          <h1>髋关节 X 光 22 点标注</h1>
+          <p>hip-24-point-annotator</p>
+          <h1>髋关节 X 光 24 点标注</h1>
         </div>
         <div class="top-actions">
           <label class="button primary">
@@ -20,11 +20,13 @@
           </label>
           <button id="btnFolder" type="button">导入文件夹</button>
           <button id="btnSave" type="button">保存</button>
-          <button id="btnClearPoints" type="button" title="清空当前图片的 22 个关键点，不影响 Shenton 曲线、ROI 或扫描校正">清空点位</button>
+          <button id="btnClearPoints" type="button" title="清空当前图片的 24 个关键点，不影响 Shenton 曲线、ROI 或扫描校正">清空点位</button>
           <button id="btnDeleteImage" class="danger" type="button" title="将这张图片及同名标注文件移动到图片同目录 trash 文件夹">删除本图</button>
+          <button id="btnDeleteSelectedImages" class="danger" type="button" disabled title="将勾选缩略图及同名标注文件移动到图片同目录 trash 文件夹">删除所选</button>
+          <button id="btnRestoreImages" type="button" title="从当前工作区 trash 文件夹中选择图片还原">还原图片</button>
           <button id="btnAutoDetect" type="button" title="用原图对当前图片重新识别；保留已经人工修改的点">原图识别</button>
           <button id="btnAutoDetectEnhanced" type="button" title="用增强预览图识别当前图片；仅辅助识别，不覆盖原图">增强识别</button>
-          <button id="btnShortcutHelp" type="button" title="查看快捷键">快捷键</button>
+          <button id="btnShortcutHelp" type="button" title="查看使用指南和快捷键">指南</button>
           <button id="btnUndo" type="button" aria-label="撤销">↶</button>
           <button id="btnRedo" type="button" aria-label="重做">↷</button>
         </div>
@@ -98,12 +100,38 @@
 
         <section class="canvas-column">
           <div class="canvas-toolbar">
-            <div class="image-title" id="imageTitle">未打开图像</div>
-            <div class="view-toggle" role="group" aria-label="图像显示模式">
-              <button class="active" type="button" data-image-view="enhanced">增强图</button>
-              <button type="button" data-image-view="original">原图</button>
+            <div class="canvas-primary">
+              <div class="image-title" id="imageTitle">未打开图像</div>
+              <div class="view-toggle" role="group" aria-label="图像显示模式">
+                <button class="active" type="button" data-image-view="original">原图</button>
+                <button type="button" data-image-view="enhanced">增强图</button>
+              </div>
             </div>
-            <div class="status-text" id="statusText">就绪</div>
+            <div class="display-controls" aria-label="常用显示调节">
+              <label class="toolbar-slider" for="brightnessSlider">
+                <span>亮度</span>
+                <input id="brightnessSlider" type="range" min="50" max="180" value="100" />
+                <output id="brightnessValue">100%</output>
+              </label>
+              <label class="toolbar-slider" for="contrastSlider">
+                <span>对比度</span>
+                <input id="contrastSlider" type="range" min="50" max="180" value="100" />
+                <output id="contrastValue">100%</output>
+              </label>
+              <button id="btnResetDisplayAdjustments" type="button">重置</button>
+            </div>
+            <div class="workflow-strip" aria-label="常用工作流设置">
+              <label class="toolbar-toggle">
+                <input id="autoDetectToggle" type="checkbox" checked />
+                <span>自动识别</span>
+              </label>
+              <label class="toolbar-toggle">
+                <input id="autoSaveToggle" type="checkbox" checked />
+                <span>自动保存</span>
+              </label>
+              <small id="autoDetectQueueText">未排队</small>
+              <div class="status-text" id="statusText">就绪</div>
+            </div>
           </div>
           <div class="canvas-wrap" id="canvasWrap">
             <canvas id="mainCanvas"></canvas>
@@ -128,14 +156,11 @@
               <button type="button" data-status-filter="shenton_complete">Shenton完成</button>
               <button type="button" data-status-filter="done">已完成</button>
             </div>
-            <small id="saveInfoText">尚未保存当前图片</small>
-            <small id="importReportText">命名混乱或目录嵌套时，可先发给项目团队整理</small>
-            <small id="progressReportText">状态文件会自动生成在当前文件夹中</small>
           </div>
           <div class="panel-head">
             <div>
               <h2>当前图像</h2>
-              <p id="completionText">0 / 22</p>
+              <p id="completionText">0 / 20 必标</p>
             </div>
           </div>
           <div class="summary-grid">
@@ -152,9 +177,21 @@
               <strong id="countManual">0</strong>
             </div>
             <div>
-              <span>缺失</span>
-              <strong id="countMissing">22</strong>
+              <span>缺失(必标)</span>
+              <strong id="countMissing">20</strong>
             </div>
+          </div>
+          <div class="display-adjust-box">
+            <div class="settings-title">显示调节</div>
+            <div class="display-adjust-values">
+              <span>亮度 <strong id="sideBrightnessValue">100%</strong></span>
+              <span>对比度 <strong id="sideContrastValue">100%</strong></span>
+            </div>
+            <div id="displayAdjustPad" class="display-adjust-pad" role="slider" aria-label="拖动调节亮度和对比度" tabindex="0">
+              <span>按住左键拖动</span>
+              <i></i>
+            </div>
+            <small>向左/右调对比度，向上/下调亮度；参数随标注保存。</small>
           </div>
           <div class="completion-actions">
             <button id="btnConfirmKeypointsComplete" type="button">确认关键点完成</button>
@@ -178,15 +215,7 @@
           <details class="advanced-box">
             <summary>高级设置与团队导出</summary>
           <div class="settings-box">
-            <div class="settings-title">工作流</div>
-            <label class="toggle-row">
-              <input id="autoDetectToggle" type="checkbox" checked />
-              <span>启用自动识别</span>
-            </label>
-            <label class="toggle-row">
-              <input id="autoSaveToggle" type="checkbox" checked />
-              <span>自动保存</span>
-            </label>
+            <div class="settings-title">文件与导出</div>
             <div class="dataset-root-box">
               <span>当前工作区</span>
               <small id="datasetRootText">annotation-tool</small>
@@ -196,12 +225,8 @@
               <span>保存规则</span>
               <small>JSON 保存到 annotations；YOLO txt 保存到图片同目录</small>
             </div>
-            <div class="dataset-root-box">
-              <span>自动识别</span>
-              <small id="autoDetectQueueText">未排队</small>
-            </div>
             <button id="btnExportYolo" type="button" title="团队整理或训练使用；医生提交时直接发送整个文件夹即可">团队导出 YOLO</button>
-            <div class="settings-title">显示</div>
+            <div class="settings-title">显示覆盖层</div>
             <label class="toggle-row">
               <input id="showDefaultConnectionsToggle" type="checkbox" checked />
               <span>默认连线</span>
@@ -224,7 +249,7 @@
             </label>
             <label class="toggle-row">
               <input id="showPoint10And11Toggle" type="checkbox" />
-              <span>10/11 点</span>
+              <span>10/11 点（可选）</span>
             </label>
           </div>
           <div class="connection-box">
@@ -260,8 +285,50 @@
       </form>
     </dialog>
 
+    <dialog id="deleteImageDialog">
+      <form method="dialog" class="folder-dialog">
+        <h2>删除图片</h2>
+        <p id="deleteImageMessage" class="dialog-message"></p>
+        <label class="toggle-row">
+          <input id="skipDeleteConfirmToggle" type="checkbox" />
+          <span>本次会话不再确认</span>
+        </label>
+        <div class="dialog-actions">
+          <button value="cancel" type="submit">取消</button>
+          <button class="danger" value="confirm" type="submit">删除</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="restoreDialog">
+      <form method="dialog" class="folder-dialog restore-dialog">
+        <h2>还原图片</h2>
+        <p id="restoreEmpty" class="dialog-message">trash 中没有可还原图片</p>
+        <div id="restoreList" class="restore-list"></div>
+        <div class="dialog-actions">
+          <button value="cancel" type="submit">取消</button>
+          <button id="btnConfirmRestore" value="default" type="button" disabled>还原所选</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="shortcutsDialog">
-      <form method="dialog" class="shortcut-dialog">
+      <form method="dialog" class="guide-dialog">
+        <h2>使用指南</h2>
+        <section class="guide-section">
+          <h3>保存与提交</h3>
+          <p id="saveInfoText">当前图片修改后开启自动保存会自动保存；保存会写入 JSON 和同名 YOLO txt。</p>
+          <p id="progressReportText">状态文件会自动生成在当前文件夹中。</p>
+        </section>
+        <section class="guide-section">
+          <h3>导入与整理</h3>
+          <p id="importReportText">命名混乱或目录嵌套时，可先发给项目团队整理。</p>
+        </section>
+        <section class="guide-section">
+          <h3>图像显示</h3>
+          <p>亮度和对比度只影响当前显示，不改变图片、关键点坐标或导出文件；顶部滑块和右侧拖动板同步，设置会写入当前标注文件。</p>
+          <p>当前 schema 为每侧 12 点，共 24 点；#7 为股骨颈轴中心远端，#12 为股骨颈轴中心近端。#10/#11 默认可选，不计入完成缺失。</p>
+        </section>
         <h2>快捷键</h2>
         <div class="shortcut-grid">
           <span>V</span><span>选择/拖拽</span>
@@ -273,8 +340,8 @@
           <span>D</span><span>原图识别</span>
           <span>F</span><span>适配当前图</span>
           <span>Ctrl+S</span><span>保存</span>
-          <span>← / →</span><span>上一张 / 下一张</span>
-          <span>Delete</span><span>删除选中项或标记缺失</span>
+          <span>← / →</span><span>保留给系统，不切换图片</span>
+          <span>Delete</span><span>删除选中项；无选中项时删除当前图片</span>
         </div>
         <div class="dialog-actions">
           <button value="default" type="submit">关闭</button>
@@ -282,6 +349,6 @@
       </form>
     </dialog>
 
-    <script src="/static/app.js?v=streamlined-display"></script>
+    <script src="/static/app.js?v=hip24-optional-10-11"></script>
   </body>
 </html>

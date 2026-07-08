@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from .schema import Annotation, SIDES
+from .schema import (
+    Annotation,
+    LANDMARK_DEFS,
+    OPTIONAL_LANDMARK_DEFS,
+    REQUIRED_LANDMARK_DEFS,
+    SIDES,
+    key_for,
+)
 
 
-KEYPOINT_TOTAL = 22
+KEYPOINT_TOTAL = len(SIDES) * len(LANDMARK_DEFS)
+REQUIRED_KEYPOINT_TOTAL = len(SIDES) * len(REQUIRED_LANDMARK_DEFS)
+OPTIONAL_KEYPOINT_TOTAL = len(SIDES) * len(OPTIONAL_LANDMARK_DEFS)
 PROGRESS_STATUS_VERSION = 2
 SHENTON_SEGMENTS = ("obturator_upper_curve", "femoral_neck_inner_lower_curve")
 SHENTON_DONE_STATUSES = {"continuous", "discontinuous", "uncertain"}
@@ -19,7 +28,11 @@ def annotation_progress(annotation: Annotation) -> dict[str, Any]:
         "status": status,
         "keypoint_status": keypoints["status"],
         "shenton_status": shenton["status"],
-        "status_detail": f"关键点 {keypoints['visible']}/{keypoints['total']}；Shenton {shenton['complete_sides']}/{shenton['total_sides']}",
+        "status_detail": (
+            f"关键点 {keypoints['visible']}/{keypoints['total']}；"
+            f"可选 {keypoints['optional_visible']}/{keypoints['optional_total']}；"
+            f"Shenton {shenton['complete_sides']}/{shenton['total_sides']}"
+        ),
         "keypoints": keypoints,
         "shenton": shenton,
     }
@@ -28,19 +41,28 @@ def annotation_progress(annotation: Annotation) -> dict[str, Any]:
 def keypoint_progress(annotation: Annotation) -> dict[str, Any]:
     visible = 0
     manual = 0
-    for point in annotation.keypoints.values():
-        is_visible = bool(point.visible and point.x is not None and point.y is not None)
-        if not is_visible:
-            continue
-        visible += 1
-        if point.source == "manual":
-            manual += 1
+    optional_visible = 0
+    optional_manual = 0
+    for side in SIDES:
+        for landmark in LANDMARK_DEFS:
+            point = annotation.keypoints.get(key_for(side, landmark.name))
+            is_visible = bool(point and point.visible and point.x is not None and point.y is not None)
+            if not is_visible:
+                continue
+            if landmark in OPTIONAL_LANDMARK_DEFS:
+                optional_visible += 1
+                if point.source == "manual":
+                    optional_manual += 1
+                continue
+            visible += 1
+            if point.source == "manual":
+                manual += 1
     complete = _manual_keypoints_confirmed(annotation)
     if complete:
         status = "complete"
-    elif visible == 0:
+    elif visible == 0 and optional_visible == 0:
         status = "pending"
-    elif visible >= KEYPOINT_TOTAL and manual == 0:
+    elif visible >= REQUIRED_KEYPOINT_TOTAL and manual == 0:
         status = "auto"
     else:
         status = "in_progress"
@@ -48,7 +70,12 @@ def keypoint_progress(annotation: Annotation) -> dict[str, Any]:
         "status": status,
         "visible": visible,
         "manual": manual,
-        "total": KEYPOINT_TOTAL,
+        "total": REQUIRED_KEYPOINT_TOTAL,
+        "optional_visible": optional_visible,
+        "optional_manual": optional_manual,
+        "optional_total": OPTIONAL_KEYPOINT_TOTAL,
+        "all_visible": visible + optional_visible,
+        "all_total": KEYPOINT_TOTAL,
         "complete": complete,
     }
 

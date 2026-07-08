@@ -1,4 +1,4 @@
-"""Standalone 22-point hip X-ray annotation tool."""
+"""Standalone 24-point hip X-ray annotation tool."""
 
 __all__ = ["__version__"]
 

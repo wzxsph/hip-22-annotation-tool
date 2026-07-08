@@ -108,7 +108,7 @@ def compute_acetabular_depth_side(annotation: Annotation, side: str) -> dict[str
         depth_mm = _point_to_line_distance(femoral_mm, teardrop_mm, acetabular_mm)
     else:
         warnings.append("缺少有效 DICOM PixelSpacing，当前仅输出像素距离。")
-    warnings.append("当前 22 点 schema 无独立泪滴外缘点，暂以 teardrop_lower 作为泪滴外缘代理。")
+    warnings.append("当前 24 点 schema 无独立泪滴外缘点，暂以 teardrop_lower 作为泪滴外缘代理。")
     return {
         "status": "computed",
         "available": True,

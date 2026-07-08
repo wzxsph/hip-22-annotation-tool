@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .completion import annotation_progress
+from .completion import REQUIRED_KEYPOINT_TOTAL, annotation_progress
 from .schema import Annotation, Manifest, ManifestImage, annotation_from_dict
 
 
@@ -282,7 +282,7 @@ def _html_report(rows: list[dict[str, Any]], counts: dict[str, int]) -> str:
         f"<td>{html.escape(row['filename'])}</td>"
         f"<td><span class='badge {html.escape(row['status'])}'>{html.escape(row['status_label'])}</span></td>"
         f"<td>{html.escape(row['status_detail'] or '-')}</td>"
-        f"<td>{row['visible_count']}/22</td>"
+        f"<td>{row['visible_count']}/{REQUIRED_KEYPOINT_TOTAL}</td>"
         f"<td>{row['shenton_complete_sides']}/2</td>"
         f"<td>{row['manual_count']}</td>"
         f"<td>{html.escape(row['auto_source'] or '-')}</td>"

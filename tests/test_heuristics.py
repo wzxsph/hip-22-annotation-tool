@@ -37,7 +37,7 @@ def test_missing_model_returns_blank_template_without_crashing(monkeypatch, tmp_
     result = estimate_keypoints_from_image(image)
 
     assert not result.model_available
-    assert len(result.keypoints) == 22
+    assert len(result.keypoints) == 24
     assert any("Model unavailable" in item for item in result.warnings)
     for key, point in result.keypoints.items():
         assert not point.visible, key

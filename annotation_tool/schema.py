@@ -31,15 +31,24 @@ LANDMARK_DEFS: tuple[LandmarkDef, ...] = (
     LandmarkDef(4, "teardrop_lower", "泪滴下缘", "泪滴形阴影底端尖点"),
     LandmarkDef(5, "femoral_shaft_prox", "股骨干轴近端中心", "小转子下方股骨干横截面中心"),
     LandmarkDef(6, "femoral_shaft_dist", "股骨干轴远端中心", "股骨干远端可见段横截面中心"),
-    LandmarkDef(7, "femoral_neck_axis_center", "股骨颈轴中心", "股骨头与股骨干之间的股骨颈中心"),
+    LandmarkDef(7, "femoral_neck_axis_center", "股骨颈轴中心远端", "股骨颈轴靠近股骨干侧的中心点"),
     LandmarkDef(8, "femoral_head_medial", "股骨头最内侧缘", "股骨头轮廓最靠近身体中线的点"),
     LandmarkDef(9, "femoral_head_lateral", "股骨头最外侧缘", "股骨头轮廓最远离身体中线的点"),
     LandmarkDef(10, "obturator_upper", "闭孔上缘", "闭孔透亮区顶部弧线最高点"),
     LandmarkDef(11, "femoral_neck_inner_lower", "股骨颈内下缘", "股骨颈内下方与股骨干交界处"),
+    LandmarkDef(12, "femoral_neck_axis_proximal", "股骨颈轴中心近端", "股骨颈轴靠近股骨头侧的中心点"),
 )
 
 LANDMARK_NAMES = tuple(item.name for item in LANDMARK_DEFS)
 LANDMARK_BY_NAME = {item.name: item for item in LANDMARK_DEFS}
+OPTIONAL_LANDMARK_NUMBERS = frozenset({10, 11})
+REQUIRED_LANDMARK_DEFS = tuple(item for item in LANDMARK_DEFS if item.number not in OPTIONAL_LANDMARK_NUMBERS)
+OPTIONAL_LANDMARK_DEFS = tuple(item for item in LANDMARK_DEFS if item.number in OPTIONAL_LANDMARK_NUMBERS)
+
+
+def is_optional_landmark_name(name: str) -> bool:
+    landmark = LANDMARK_BY_NAME.get(name)
+    return bool(landmark and landmark.number in OPTIONAL_LANDMARK_NUMBERS)
 
 
 def utc_now() -> str:
@@ -172,6 +181,13 @@ def default_scan_transform(*, annotator: str = "") -> dict[str, Any]:
     }
 
 
+def default_display_settings() -> dict[str, Any]:
+    return {
+        "brightness": 100,
+        "contrast": 100,
+    }
+
+
 class ImageInfo(ExtraModel):
     filename: str
     width: int
@@ -206,6 +222,7 @@ class Annotation(ExtraModel):
     shenton_adjustments: Dict[str, Any] = Field(default_factory=default_shenton_adjustments)
     roi_crop: Dict[str, Any] = Field(default_factory=default_roi_crop)
     scan_transform: Dict[str, Any] = Field(default_factory=default_scan_transform)
+    display_settings: Dict[str, Any] = Field(default_factory=default_display_settings)
     auto_initialization: Dict[str, Any] = Field(default_factory=dict)
     measurements_snapshot: Dict[str, Any] = Field(default_factory=dict)
     review: Dict[str, Any] = Field(default_factory=dict)
@@ -312,6 +329,8 @@ def default_connections(*, annotator: str = "") -> list[Connection]:
             add(side_key(side, a), side_key(side, b), f"{prefix} #9-#3-#8", f"{side_id}_head")
         for a, b in ((1, 3), (3, 7), (7, 5), (5, 6), (6, 11), (11, 1)):
             add(side_key(side, a), side_key(side, b), f"{prefix} #1-#3-#7-#5-#6-#11", f"{side_id}_loop")
+        add(side_key(side, 8), side_key(side, 9), f"{prefix} #8-#9", f"{side_id}_head_width")
+        add(side_key(side, 12), side_key(side, 7), f"{prefix} #12-#7", f"{side_id}_neck_axis")
 
     image_path = [
         side_key("left", 4),

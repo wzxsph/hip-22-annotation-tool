@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>HIP22 髋关节 X 光标注工具使用指南</title>
+    <style>
+      @page { size: A4; margin: 18mm; }
+      body {
+        font-family: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+        color: #182026;
+        line-height: 1.62;
+        font-size: 12.5px;
+      }
+      h1 { font-size: 25px; margin: 0 0 8px; }
+      h2 { font-size: 16px; margin: 22px 0 8px; border-bottom: 1px solid #d7dee2; padding-bottom: 4px; }
+      h3 { font-size: 13px; margin: 14px 0 5px; }
+      p, ul, ol { margin: 6px 0; }
+      li { margin: 3px 0; }
+      table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 11.5px; }
+      th, td { border: 1px solid #d7dee2; padding: 6px 7px; vertical-align: top; }
+      th { background: #eef2f3; text-align: left; }
+      .note { border-left: 3px solid #1c7ed6; background: #eef7ff; padding: 8px 10px; margin: 10px 0; }
+      .warn { border-left: 3px solid #e67700; background: #fff8e8; padding: 8px 10px; margin: 10px 0; }
+      code { font-family: Consolas, "Courier New", monospace; background: #f1f3f5; padding: 1px 3px; }
+    </style>
+  </head>
+  <body>
+    <h1>HIP22 髋关节 X 光标注工具使用指南</h1>
+    <p>当前版本用于标注每侧 12 个关键点，共 24 个关键点。#10/#11 默认可选，不计入完成缺失；自动识别结果只作为初始参考，最终结果以人工复核、保存后的 JSON 和同名 YOLO txt 为准。</p>
+
+    <h2>1. 导入与工作区</h2>
+    <ol>
+      <li>点击“导入文件夹”，选择包含原始图片的病例目录。</li>
+      <li>打开缩略图后，默认先显示原图；增强图只作为查看和辅助识别，不覆盖原始图片。</li>
+      <li>命名混乱或目录嵌套时，可先把文件夹发给项目团队整理。</li>
+    </ol>
+
+    <h2>2. 标注流程</h2>
+    <ol>
+      <li>逐张检查自动识别点位，拖动错误点，缺失点用“放点”补齐。</li>
+      <li>完成后点击“确认关键点完成”；Shenton 曲线完成后点击“确认沈通线完成”。</li>
+      <li>保存会写入 annotations 目录下的 JSON，同时在图片同目录写入 YOLO txt。</li>
+      <li>若开启“自动保存”，当前图片修改后会自动保存；亮度/对比度设置也会写入 JSON 的 <code>display_settings</code>。</li>
+    </ol>
+
+    <h2>3. 24 点说明</h2>
+    <table>
+      <thead><tr><th>编号</th><th>名称</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>髋臼外上缘</td><td>髋臼顶最外上方的骨性凸起。</td></tr>
+        <tr><td>2</td><td>Y 形软骨中心</td><td>髋臼中心小凹陷或髂骨最下缘。</td></tr>
+        <tr><td>3</td><td>股骨头中心</td><td>股骨头几何中心。</td></tr>
+        <tr><td>4</td><td>泪滴下缘</td><td>泪滴形阴影底端尖点。</td></tr>
+        <tr><td>5</td><td>股骨干轴近端中心</td><td>小转子下方股骨干横截面中心。</td></tr>
+        <tr><td>6</td><td>股骨干轴远端中心</td><td>股骨干远端可见段横截面中心。</td></tr>
+        <tr><td>7</td><td>股骨颈轴中心远端</td><td>股骨颈轴靠近股骨干侧的中心点。</td></tr>
+        <tr><td>8</td><td>股骨头最内侧缘</td><td>股骨头轮廓最靠近身体中线的点。</td></tr>
+        <tr><td>9</td><td>股骨头最外侧缘</td><td>股骨头轮廓最远离身体中线的点。</td></tr>
+        <tr><td>10</td><td>闭孔上缘（可选）</td><td>闭孔透亮区顶部弧线最高点；默认可不标注。</td></tr>
+        <tr><td>11</td><td>股骨颈内下缘（可选）</td><td>股骨颈内下方与股骨干交界处；默认可不标注。</td></tr>
+        <tr><td>12</td><td>股骨颈轴中心近端</td><td>股骨颈轴靠近股骨头侧的中心点。</td></tr>
+      </tbody>
+    </table>
+    <p>左右两侧各一套 12 点，其中 #10/#11 为可选点；完成度按两侧共 20 个必标点统计。#8-#9 和 #12-#7 会作为默认参考连线显示。</p>
+
+    <h2>4. 亮度与对比度</h2>
+    <ul>
+      <li>顶部滑块适合精确调整；右侧“显示调节”面板适合快速拖动调整。</li>
+      <li>在右侧调节板中按住鼠标左键拖动：向左/右调对比度，向上/下调亮度。</li>
+      <li>这些参数只影响显示，不改变原图像素和关键点坐标；保存后会进入 JSON，供后期归一化参考。</li>
+    </ul>
+
+    <h2>5. 删除、还原与缩略图</h2>
+    <ul>
+      <li>底部缩略图可勾选多张，点击“删除所选”批量删除原图片及同名标注文件。</li>
+      <li>“还原图片”可从当前工作区 trash 文件夹中恢复误删图片。</li>
+      <li>当前图片会在缩略图条中以红色粗框高亮。</li>
+    </ul>
+
+    <h2>6. 快捷键</h2>
+    <table>
+      <thead><tr><th>快捷键</th><th>功能</th></tr></thead>
+      <tbody>
+        <tr><td>V</td><td>选择/拖拽。</td></tr>
+        <tr><td>P</td><td>放置关键点。</td></tr>
+        <tr><td>R</td><td>绘制 ROI。</td></tr>
+        <tr><td>C</td><td>扫描四角校正。</td></tr>
+        <tr><td>S</td><td>Shenton 曲线。</td></tr>
+        <tr><td>E</td><td>原图/增强图切换。</td></tr>
+        <tr><td>D</td><td>原图识别。</td></tr>
+        <tr><td>F</td><td>适配当前图像。</td></tr>
+        <tr><td>Ctrl+S</td><td>保存当前标注。</td></tr>
+        <tr><td>Delete</td><td>删除选中点/线；无选中项时删除当前图片。</td></tr>
+        <tr><td>← / →</td><td>不切换图片，避免缩略图或图像被键盘误移动。</td></tr>
+      </tbody>
+    </table>
+
+    <h2>7. 完成提交</h2>
+    <p>工作区会生成 <code>HIP22_STATUS_DONE_..._TODO_....txt</code>、<code>HIP22_status_report.html</code>、<code>HIP22_status_report.csv</code> 和 <code>HIP22_SUBMISSION_README.txt</code>。提交前请打开 HTML 报告确认未完成图片。</p>
+    <div class="warn">自动识别模型目前仍只填充原有每侧 11 个模型点，新 #12 “股骨颈轴中心近端”需要人工标注。</div>
+  </body>
+</html>

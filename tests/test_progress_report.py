@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image
 
 from annotation_tool.progress_report import build_progress_payload, build_progress_rows
-from annotation_tool.schema import create_blank_annotation, make_keypoint
+from annotation_tool.schema import create_blank_annotation, is_optional_landmark_name, make_keypoint
 from annotation_tool.storage import save_annotation, upsert_manifest_image
 
 
@@ -13,6 +13,13 @@ def _write_image(path: Path) -> None:
 
 def _fill_all_keypoints(annotation):
     for point in annotation.keypoints.values():
+        annotation.keypoints[point.id] = make_keypoint(point.side, point.name, 10, 10, source="manual", confidence=1)
+
+
+def _fill_required_keypoints(annotation):
+    for point in annotation.keypoints.values():
+        if is_optional_landmark_name(point.name):
+            continue
         annotation.keypoints[point.id] = make_keypoint(point.side, point.name, 10, 10, source="manual", confidence=1)
 
 
@@ -87,10 +94,28 @@ def test_full_manual_keypoints_without_confirmation_are_in_progress(tmp_path):
     assert rows[0]["status"] == "in_progress"
     assert rows[0]["keypoint_status"] == "in_progress"
     assert rows[0]["shenton_status"] == "pending"
-    assert rows[0]["status_detail"] == "关键点 22/22；Shenton 0/2"
+    assert rows[0]["status_detail"] == "关键点 20/20；可选 4/4；Shenton 0/2"
     assert payload["counts"]["done"] == 0
     assert payload["counts"]["in_progress"] == 1
     assert payload["counts"]["needs_review"] == 1
+
+
+def test_optional_10_11_points_do_not_block_keypoint_completion(tmp_path):
+    image_path = tmp_path / "case.png"
+    _write_image(image_path)
+    annotation = create_blank_annotation("case.png", 80, 60, annotator="doctor-a")
+    _fill_required_keypoints(annotation)
+    _confirm_keypoints(annotation)
+    save_annotation(annotation, tmp_path)
+    manifest = upsert_manifest_image(image_path, annotation=annotation, root=tmp_path)
+
+    rows = build_progress_rows(tmp_path, manifest)
+    payload = build_progress_payload(tmp_path, manifest)
+
+    assert rows[0]["status"] == "keypoint_complete"
+    assert rows[0]["status_detail"] == "关键点 20/20；可选 0/4；Shenton 0/2"
+    assert rows[0]["visible_count"] == 20
+    assert payload["counts"]["keypoint_complete"] == 1
 
 
 def test_confirmed_keypoints_without_shenton_are_keypoint_complete(tmp_path):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageEnhance, ImageOps
 import numpy as np
 
 
@@ -19,9 +19,10 @@ def enhance_xray_image(image: Image.Image) -> Image.Image:
     if pixels.size == 0:
         return Image.new("RGB", image.size)
 
-    enhanced = _normalize_grayscale_array(pixels, upper_percentile=99.4)
-    enhanced = ImageOps.autocontrast(enhanced, cutoff=0.5)
-    enhanced = ImageOps.equalize(enhanced)
+    enhanced = _normalize_grayscale_array(pixels, lower_percentile=0.5, upper_percentile=99.7)
+    enhanced = ImageOps.autocontrast(enhanced, cutoff=0.2)
+    enhanced = ImageEnhance.Contrast(enhanced).enhance(1.12)
+    enhanced = _limit_brightness_lift(enhanced, image)
     return enhanced.convert("RGB")
 
 
@@ -75,3 +76,15 @@ def _normalize_grayscale_array(
 
     normalized = np.nan_to_num(normalized, nan=0.0, posinf=255.0, neginf=0.0)
     return Image.fromarray(normalized.astype(np.uint8), mode="L")
+
+
+def _limit_brightness_lift(enhanced: Image.Image, source: Image.Image) -> Image.Image:
+    reference = normalize_image_to_display_rgb(source).convert("L")
+    reference_mean = float(np.mean(np.asarray(reference, dtype=np.float32)))
+    enhanced_pixels = np.asarray(enhanced.convert("L"), dtype=np.float32)
+    enhanced_mean = float(np.mean(enhanced_pixels))
+    if reference_mean < 150.0 or enhanced_mean <= reference_mean + 2.0:
+        return enhanced
+
+    adjusted = np.clip(enhanced_pixels - (enhanced_mean - reference_mean), 0.0, 255.0)
+    return Image.fromarray(adjusted.astype(np.uint8), mode="L")

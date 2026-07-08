@@ -62,6 +62,8 @@ class SettingsRequest(BaseModel):
     auto_detect: Optional[bool] = None
     autosave: Optional[bool] = None
     annotator: Optional[str] = None
+    display_brightness: Optional[int] = None
+    display_contrast: Optional[int] = None
 
 
 class SelectFolderRequest(BaseModel):
@@ -75,6 +77,14 @@ class AutoDetectImageRequest(BaseModel):
     use_enhanced: bool = False
     use_roi: bool = True
     use_scan: bool = True
+
+
+class BatchDeleteImagesRequest(BaseModel):
+    filenames: list[str]
+
+
+class RestoreTrashRequest(BaseModel):
+    trash_paths: list[str]
 
 
 @dataclass(frozen=True)
@@ -152,6 +162,120 @@ def _move_to_trash(path: Path, root: Path, trash_dir: Path) -> dict[str, str]:
     return {
         "source": _path_for_response(path, root),
         "trash_path": _path_for_response(destination, root),
+    }
+
+
+def _delete_image_files(filename: str, root: Path) -> dict:
+    image_path = find_image_path(filename, root)
+    if image_path is None or not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    trash_dir = image_path.parent / "trash"
+    deleted: list[str] = []
+    trashed: list[dict[str, str]] = []
+    for cache_path in (
+        rendered_png_cache_path(image_path, enhanced=False),
+        rendered_png_cache_path(image_path, enhanced=True),
+        thumbnail_cache_path(image_path),
+    ):
+        if cache_path.exists():
+            cache_path.unlink()
+            deleted.append(str(cache_path))
+
+    candidates = {
+        image_path,
+        annotation_path(filename, root),
+        image_path.with_suffix(".json"),
+        label_path(filename, root, _split_from_image_path(image_path)),
+        image_path.with_suffix(".txt"),
+        root / f"{image_path.stem}.txt",
+    }
+    candidates.update(annotation_path_candidates(filename, root, image_path))
+
+    for candidate in sorted(candidates, key=lambda item: str(item)):
+        if candidate.exists() and candidate.is_file():
+            trashed.append(_move_to_trash(candidate, root, trash_dir))
+
+    manifest = load_manifest(root)
+    image_id = image_path.stem
+    manifest.images = [
+        item
+        for item in manifest.images
+        if item.id != image_id and Path(item.image_path).name != filename
+    ]
+    save_manifest(manifest, root)
+
+    return {
+        "filename": filename,
+        "deleted": deleted,
+        "trashed": trashed,
+        "trash_dir": _path_for_response(trash_dir, root),
+    }
+
+
+def _safe_workspace_path(path_text: str, root: Path) -> Path:
+    root_resolved = root.resolve()
+    path = Path(path_text)
+    resolved = path.expanduser().resolve() if path.is_absolute() else (root / path).resolve()
+    if not resolved.is_relative_to(root_resolved):
+        raise HTTPException(status_code=400, detail="Path is outside the current workspace.")
+    return resolved
+
+
+def _trash_sidecars_for_image(trash_image_path: Path) -> list[Path]:
+    return [
+        candidate
+        for candidate in (
+            trash_image_path.with_suffix(".json"),
+            trash_image_path.with_suffix(".txt"),
+        )
+        if candidate.exists() and candidate.is_file()
+    ]
+
+
+def _restore_trash_image(trash_path_text: str, root: Path) -> dict:
+    trash_image_path = _safe_workspace_path(trash_path_text, root)
+    if not trash_image_path.exists() or not trash_image_path.is_file():
+        raise HTTPException(status_code=404, detail="Trash image not found.")
+    if trash_image_path.parent.name != "trash" or not _is_image_file(trash_image_path):
+        raise HTTPException(status_code=400, detail="Path is not a restorable trash image.")
+
+    restore_dir = trash_image_path.parent.parent
+    files_to_restore = [trash_image_path, *_trash_sidecars_for_image(trash_image_path)]
+    conflicts = [path for path in files_to_restore if (restore_dir / path.name).exists()]
+    if conflicts:
+        return {
+            "trash_path": _path_for_response(trash_image_path, root),
+            "status": "conflict",
+            "detail": "Restore target already exists.",
+            "conflicts": [_path_for_response(restore_dir / path.name, root) for path in conflicts],
+        }
+
+    restored: list[dict[str, str]] = []
+    restore_dir.mkdir(parents=True, exist_ok=True)
+    for source in files_to_restore:
+        destination = restore_dir / source.name
+        shutil.move(str(source), str(destination))
+        restored.append(
+            {
+                "trash_path": _path_for_response(source, root),
+                "restored_path": _path_for_response(destination, root),
+            }
+        )
+
+    image_path = restore_dir / trash_image_path.name
+    annotation = _existing_annotation_for_image(
+        image_path,
+        root=root,
+        split=_split_from_image_path(image_path),
+        persist_imported=True,
+    )
+    upsert_manifest_image(image_path, annotation=annotation, root=root, split=_split_from_image_path(image_path))
+    return {
+        "trash_path": _path_for_response(trash_image_path, root),
+        "status": "restored",
+        "filename": image_path.name,
+        "restored": restored,
     }
 
 
@@ -853,51 +977,95 @@ async def save_annotation_data(annotation: Annotation, skip_manifest: bool = Fal
 async def delete_image(image_filename: str):
     filename = _safe_filename(image_filename)
     root = current_root()
-    image_path = find_image_path(filename, root)
-    if image_path is None or not image_path.exists() or not image_path.is_file():
-        raise HTTPException(status_code=404, detail="Image not found.")
-
-    trash_dir = image_path.parent / "trash"
-    deleted: list[str] = []
-    trashed: list[dict[str, str]] = []
-    for cache_path in (
-        rendered_png_cache_path(image_path, enhanced=False),
-        rendered_png_cache_path(image_path, enhanced=True),
-        thumbnail_cache_path(image_path),
-    ):
-        if cache_path.exists():
-            cache_path.unlink()
-            deleted.append(str(cache_path))
-
-    candidates = {
-        image_path,
-        annotation_path(filename, root),
-        image_path.with_suffix(".json"),
-        label_path(filename, root, _split_from_image_path(image_path)),
-        image_path.with_suffix(".txt"),
-        root / f"{image_path.stem}.txt",
-    }
-    candidates.update(annotation_path_candidates(filename, root, image_path))
-
-    for candidate in sorted(candidates, key=lambda item: str(item)):
-        if candidate.exists() and candidate.is_file():
-            trashed.append(_move_to_trash(candidate, root, trash_dir))
-
+    payload = _delete_image_files(filename, root)
     manifest = load_manifest(root)
-    image_id = image_path.stem
-    manifest.images = [
-        item
-        for item in manifest.images
-        if item.id != image_id and Path(item.image_path).name != filename
-    ]
-    save_manifest(manifest, root)
-
     return {
         "status": "success",
         "filename": filename,
-        "deleted": deleted,
-        "trashed": trashed,
-        "trash_dir": _path_for_response(trash_dir, root),
+        "deleted": payload["deleted"],
+        "trashed": payload["trashed"],
+        "trash_dir": payload["trash_dir"],
+        "progress": build_progress_payload_from_manifest(manifest),
+    }
+
+
+@router.post("/images/delete")
+async def delete_images(request: BatchDeleteImagesRequest):
+    root = current_root()
+    results: list[dict] = []
+    errors: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw_filename in request.filenames:
+        filename = _safe_filename(raw_filename)
+        if filename in seen:
+            continue
+        seen.add(filename)
+        try:
+            result = _delete_image_files(filename, root)
+            result["status"] = "success"
+            results.append(result)
+        except HTTPException as exc:
+            errors.append({"filename": filename, "detail": str(exc.detail)})
+    manifest = load_manifest(root)
+    return {
+        "status": "success" if not errors else "partial",
+        "deleted_count": len(results),
+        "failed_count": len(errors),
+        "results": results,
+        "errors": errors,
+        "progress": build_progress_payload_from_manifest(manifest),
+    }
+
+
+@router.get("/trash")
+async def list_trash_images():
+    root = current_root()
+    ensure_dataset_layout(root)
+    items: list[dict] = []
+    for trash_dir in sorted((path for path in root.rglob("trash") if path.is_dir()), key=lambda item: str(item)):
+        if trash_dir.name != "trash":
+            continue
+        for path in sorted(trash_dir.iterdir()):
+            if not path.is_file() or not _is_image_file(path):
+                continue
+            sidecars = _trash_sidecars_for_image(path)
+            items.append(
+                {
+                    "filename": path.name,
+                    "trash_path": _path_for_response(path, root),
+                    "restore_dir": _path_for_response(trash_dir.parent, root),
+                    "sidecars": [_path_for_response(sidecar, root) for sidecar in sidecars],
+                    "sidecar_count": len(sidecars),
+                }
+            )
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/trash/restore")
+async def restore_trash_images(request: RestoreTrashRequest):
+    root = current_root()
+    results: list[dict] = []
+    errors: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for trash_path in request.trash_paths:
+        if trash_path in seen:
+            continue
+        seen.add(trash_path)
+        try:
+            result = _restore_trash_image(trash_path, root)
+            if result.get("status") == "restored":
+                results.append(result)
+            else:
+                errors.append({"trash_path": trash_path, "detail": result.get("detail", "Restore failed.")})
+        except HTTPException as exc:
+            errors.append({"trash_path": trash_path, "detail": str(exc.detail)})
+    manifest = load_manifest(root)
+    return {
+        "status": "success" if not errors else "partial",
+        "restored_count": len(results),
+        "failed_count": len(errors),
+        "results": results,
+        "errors": errors,
         "progress": build_progress_payload_from_manifest(manifest),
     }
 

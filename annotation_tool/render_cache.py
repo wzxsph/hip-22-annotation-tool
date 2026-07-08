@@ -8,7 +8,7 @@ from .image_processing import enhance_xray_image
 from .paths import user_data_dir
 
 
-RENDER_CACHE_VERSION = "v3"
+RENDER_CACHE_VERSION = "v4"
 THUMB_CACHE_VERSION = "v2"
 THUMB_MAX_SIZE = 220
 
