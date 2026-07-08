@@ -1,4 +1,4 @@
-# AGENT.md — Hip 22-Point Annotation Tool
+# AGENT.md — Hip 24-Point Annotation Tool
 
 This repository is the standalone public annotation tool. Keep it clean, small, and safe to publish.
 
@@ -17,10 +17,10 @@ This repository is the standalone public annotation tool. Keep it clean, small, 
 - Default weight path: `models/yolo11n-best.pt`.
 - Users may override the model with `HIP22_MODEL_PATH`.
 - Device selection uses `HIP22_DEVICE` or `HIP22_MODEL_DEVICE`; unset means CUDA first, then CPU.
-- If the model or `ultralytics` is unavailable, keep the app usable and add low-confidence `template_guess` points with warnings. Never raise a 500 just because inference is unavailable.
+- If the model or `ultralytics` is unavailable, keep the app usable and leave model-missing points explicitly missing with warnings. Never raise a 500 just because inference is unavailable.
 - The current-image `Auto Detect` UI action should preserve existing manual points and may use partial model results as review candidates.
 - `Enhanced Detect` must preserve manual points and record that enhanced preprocessing was used.
-- Template fallback points are draggable starting positions only. Record `auto_initialization.template_fallback` and do not present them as model confidence or clinical truth.
+- Template fallback is disabled for current annotations. If legacy `template_guess` points are encountered, keep them visually distinct from `pose11_side`, `estimated`, and `manual`.
 
 ## Git LFS And Download ZIP
 
@@ -32,17 +32,19 @@ This repository is the standalone public annotation tool. Keep it clean, small, 
 
 ## Annotation Contract
 
-- Always keep 22 keypoint keys: `left/right × #1-#11`.
+- Always keep 24 keypoint keys: `left/right × #1-#12`.
+- Completion uses 20 required keypoints: #1-#9 and #12 on both sides. #10 and #11 are optional by default and must not block keypoint completion.
+- #12 (`femoral_neck_axis_proximal`) is inferred from the same-side #3 (`femoral_head_center`) and #7 (`femoral_neck_axis_center`) midpoint unless #12 has `source="manual"`. Never infer left #12 from right-side points or vice versa, and never allow duplicate #12 definitions per side.
 - `left_*` means image-left, `right_*` means image-right. Do not perform anatomical side swapping.
 - Missing points are explicit: `x=null`, `y=null`, `visible=false`, `visibility=0`, `source="missing"`.
 - Missingness is determined by visibility and coordinates, not by `source`.
-- `source="template_guess"` means a low-confidence fallback point generated from normalized demo medians. It must be visually distinct from `pose11_side` model output and `manual` doctor edits.
+- `source="estimated"` is used for inferred points such as #12. `source="template_guess"` may appear in legacy data only and must remain visually distinct from `pose11_side` model output and `manual` doctor edits.
 - Existing `annotations/<stem>.json` or same-folder `<stem>.txt` must load before auto-detection and must not be overwritten by background inference.
 - DICOM metadata saved in annotations must be non-PHI only: source format, pixel spacing, spacing source, dimensions, and warnings. Do not store patient name, patient ID, accession number, birth date, institution, or free-text clinical identifiers.
 - `roi_crop` is a non-destructive original-image-coordinate rectangle. Enhanced display, DICOM rendering, and ROI-based inference must map all saved points back to original image pixel coordinates.
 - `scan_transform` is a non-destructive four-corner perspective transform for phone-shot X-rays. Recognition may run on the warped scan-like view, but saved keypoints must be inverse-mapped back to original image pixel coordinates.
 - Shenton curves are research/review-aid data. Do not present `continuous_candidate` as a clinical diagnosis or validated threshold.
-- Keep default guide connections hidden by default in the UI; doctors can enable them when needed, but the main view should avoid occluding bone boundaries.
+- Keep default guide connections available but visually restrained; doctors can toggle them when needed, and the main view should avoid occluding bone boundaries.
 
 ## Storage Format Notes
 

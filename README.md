@@ -1,6 +1,6 @@
-# Hip 22-Point Annotation Tool
+# Hip 24-Point Annotation Tool
 
-FastAPI + Canvas web tool for reviewing and editing 22 hip X-ray landmarks, with optional model-assisted initialization.
+FastAPI + Canvas web tool for reviewing and editing 24 hip X-ray landmarks, with optional model-assisted initialization.
 
 This project is a research annotation aid. It is not a medical device, does not provide diagnosis, and should not be used as a standalone clinical decision system. All automatically generated points should be reviewed and corrected by a qualified user before downstream use.
 
@@ -8,7 +8,9 @@ This project is a research annotation aid. It is not a medical device, does not 
 
 ## What It Does
 
-- Annotates 22 landmarks: image-left and image-right, each with hospital points #1-#11.
+- Annotates 24 landmarks: image-left and image-right, each with hospital points #1-#12.
+- Tracks 20 required keypoints for completion; #10 and #11 on each side are optional by default and do not block completion.
+- Infers #12 (`femoral_neck_axis_proximal`) from the same-side #3 and #7 midpoint during auto-detection and annotation normalization unless #12 has been manually edited.
 - Loads a local image folder as a workspace.
 - Supports common image files plus single-frame grayscale DICOM (`.dcm`, `.dicom`, and extensionless DICOM with a valid header).
 - Renders DICOM to Canvas without writing derived PNG files into the submitted folder, and stores PixelSpacing metadata without PHI fields.
@@ -16,14 +18,16 @@ This project is a research annotation aid. It is not a medical device, does not 
 - Uses the bundled `models/yolo11n-best.pt` weight by default for model-assisted initialization.
 - Provides an `Auto Detect` button for retrying the current image without discarding manual corrections.
 - Provides an enhanced preview and enhanced auto-detect retry based on the hip_demo-style X-ray contrast pipeline.
-- Opens images in enhanced view by default, with a one-click original-image comparison.
+- Opens images in original view by default, with one-click enhanced-image comparison.
 - Caches enhanced/DICOM display PNGs under local app data so repeated image switching does not recompute enhancement every time.
 - Supports a non-destructive ROI crop box for cluttered-background images; recognition can retry inside the ROI while saved coordinates remain in the original image coordinate system.
 - Supports a four-corner scan-like transform for phone-shot X-rays; current-image recognition can run on the perspective-corrected view and map points back to original coordinates.
 - Writes visible workspace progress files so a folder can show which images are unfinished, auto-initialized, in progress, or complete.
+- Supports batch thumbnail delete, current-image delete with the `Delete` key when nothing else is selected, and trash-folder restore.
+- Saves per-image brightness/contrast display settings in annotation JSON for later normalization review.
 - Saves complete annotation JSON to `annotations/<image_stem>.json`.
 - Saves YOLO Pose sidecar labels to `<image_stem>.txt` beside each image.
-- Supports zoom, pan, drag-to-correct, missing-point marking, undo/redo, manual connections, Shenton curve collection, and keyboard image navigation.
+- Supports zoom, pan, drag-to-correct, missing-point marking, undo/redo, manual connections, Shenton curve collection, and keyboard shortcuts.
 
 The bundled yolo11n-best weight is trained from manually created research annotations on MTDDH-derived images by a non-medical annotator; users should review and correct all outputs before use.
 
@@ -89,6 +93,7 @@ Share only the ZIP after the smoke test passes. See:
 - [Windows CPU build notes](docs/windows-cpu-build.md)
 - [Windows ZIP distribution](docs/windows-zip-distribution.md)
 - [Chinese hospital user guide](docs/hospital-user-guide.md)
+- [Chinese PDF user guide](docs/HIP22-使用指南.pdf)
 - [Demo video script](docs/demo-video-script.md)
 - [Internal data preparation](docs/internal-data-prep.md)
 
@@ -121,14 +126,14 @@ Version 0.3.1 adds manual confirmation workflows, streamlined default guide conn
 
 - DICOM import reads `PixelSpacing` / `ImagerPixelSpacing`, applies rescale slope/intercept, window center/width, and `MONOCHROME1` inversion. Unsupported compressed/private formats are reported as warnings instead of stopping the whole folder import.
 - The annotation JSON stores non-PHI image metadata only: `source_format`, pixel spacing fields, spacing source, and DICOM warnings. It does not store `PatientName`, `PatientID`, `AccessionNumber`, or similar identifiers.
-- The UI opens in `Enhanced` viewing by default and can switch back to `Original` for comparison. Enhanced view uses grayscale percentile stretch, `autocontrast(cutoff=0.5)`, and histogram equalization for easier boundary review. It does not change coordinates or overwrite the source image.
+- The UI opens in `Original` viewing by default and can switch to `Enhanced` for comparison. Enhanced view uses conservative grayscale normalization and contrast adjustment for easier boundary review. It does not change coordinates or overwrite the source image.
 - Folder import queues model-assisted initialization with enhanced preprocessing by default; `Enhanced Detect` uses the same preprocessing path for current-image retries.
 - If a reviewer draws an ROI crop, current-image auto-detect retries inside that ROI and maps detected points back to the original image coordinates.
 - If a reviewer marks four scan corners, current-image auto-detect first warps the image into a scan-like view, then maps detected points back to the original image coordinates. This is intended for phone-shot images with visible film borders.
-- If model output is unavailable or incomplete, missing points remain missing. The tool no longer fills absent model output with template guesses.
-- 11 predefined anatomical guide connections (acetabular, femoral head, femoral shaft, cross-midline) are shown by default in light red, excluding #1-#4 and left #4-right #4. Default connections, manual connections, Shenton curves, measurement lines, point labels, and #10/#11 point display each have separate toggles.
-- The `Delete image` action moves the image plus same-name annotation JSON and YOLO txt files into a `trash` folder beside the image, so accidental deletion can be manually restored.
-- Manual keypoint confirmation: reviewers must explicitly click "确认关键点完成" before keypoints count as complete; 22 model-detected points are treated as review-ready (`auto`), not complete.
+- If model output is unavailable or incomplete, missing points remain missing. The tool no longer fills absent model output with template guesses. #12 is the only inferred point: it is recalculated from same-side #3 and #7 unless manually edited.
+- Default anatomical guide connections include femoral head width #8-#9 and femoral neck axis #12-#7. Default connections, manual connections, Shenton curves, measurement lines, point labels, and optional #10/#11 point display each have separate toggles.
+- The `Delete image` and `Delete selected` actions move images plus same-name annotation JSON and YOLO txt files into a `trash` folder beside the image, so accidental deletion can be restored from the app.
+- Manual keypoint confirmation: reviewers must explicitly click "确认关键点完成" before keypoints count as complete; the 20 required points drive progress, while #10/#11 remain optional.
 - Manual Shenton confirmation: a matching "确认沈通线完成" button requires explicit reviewer sign-off for Shenton curves. Shenton & Measurement panel is collapsed by default.
 - The Shenton tool lets a reviewer mark left/right obturator upper curve and femoral-neck inner-lower curve with at least 3 points per segment; more points are allowed for curve fitting. The reviewer records `continuous`, `discontinuous`, or `uncertain`. The tool no longer asks reviewers to mark an extension intersection; legacy intersection fields are read for compatibility only and are ignored by training export. Measurements are research aids only, not clinical conclusions.
 - `/api/annotation/measurements/compute` returns Shenton endpoint `gap_px`, optional `gap_mm`, AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, acetabular depth, and warnings. Acetabular depth is shown in mm when DICOM PixelSpacing is available.
@@ -179,7 +184,7 @@ All point, Shenton, ROI, scan-transform, measurement, and DICOM-display coordina
 Important fields:
 
 - `image`: filename, dimensions, split, source format, pixel spacing fields, DICOM warnings, and side convention. DICOM PHI fields such as patient name, patient ID, accession number, and birth date are not saved.
-- `keypoints`: the fixed 22-key schema. `source="pose11_side"` means model output; `source="template_guess"` may appear in legacy data only; `source="manual"` means the reviewer moved or placed the point.
+- `keypoints`: the fixed 24-key schema. `source="pose11_side"` means direct model output; `source="estimated"` is used for inferred points such as #12 from same-side #3/#7; `source="template_guess"` may appear in legacy data only; `source="manual"` means the reviewer moved or placed the point.
 - `roi_crop`: optional non-destructive crop box with `enabled`, `x`, `y`, `width`, `height`, `source`, `updated_at`, and `annotator`.
 - `scan_transform`: optional non-destructive four-corner transform with `enabled`, `corners`, `mode`, `source`, `updated_at`, and `annotator`.
 - `shenton_curves` and `shenton_review`: left/right Shenton curve point lists and doctor review status.
@@ -188,7 +193,7 @@ Important fields:
 
 ## Landmark Schema
 
-Each image stores 22 keypoints. `left_*` means image-left and `right_*` means image-right; there is no anatomical left/right swap.
+Each image stores 24 keypoints. `left_*` means image-left and `right_*` means image-right; there is no anatomical left/right swap. Completion currently requires 20 points: #1-#9 and #12 on both sides. #10 and #11 are optional by default.
 
 | # | Field | Chinese label |
 |---|---|---|
@@ -198,11 +203,14 @@ Each image stores 22 keypoints. `left_*` means image-left and `right_*` means im
 | 4 | `teardrop_lower` | 泪滴下缘 |
 | 5 | `femoral_shaft_prox` | 股骨干轴近端中心 |
 | 6 | `femoral_shaft_dist` | 股骨干轴远端中心 |
-| 7 | `femoral_neck_axis_center` | 股骨颈轴中心 |
+| 7 | `femoral_neck_axis_center` | 股骨颈轴中心远端 |
 | 8 | `femoral_head_medial` | 股骨头最内侧缘 |
 | 9 | `femoral_head_lateral` | 股骨头最外侧缘 |
 | 10 | `obturator_upper` | 闭孔上缘 |
 | 11 | `femoral_neck_inner_lower` | 股骨颈内下缘 |
+| 12 | `femoral_neck_axis_proximal` | 股骨颈轴中心近端 |
+
+#12 is inferred from the same-side #3 and #7 midpoint during auto-detection and when legacy JSON is normalized, unless it has `source="manual"`.
 
 Missing points are represented explicitly:
 
@@ -227,8 +235,8 @@ The UI treats a point as visible only when `visible = true`, `visibility > 0`, a
 | Mouse wheel | Zoom |
 | Space + drag | Pan |
 | Fit / `F` | Recenter and scale the current image to the canvas; in ROI/scan mode it fits the ROI or scan region when available |
-| `←` / `→` | Previous / next image |
-| `Delete` | Mark selected point missing, or hide/delete selected connection |
+| `←` / `→` | Reserved; does not switch images, to avoid accidental thumbnail/image movement |
+| `Delete` | Mark selected point missing, hide/delete selected connection, or delete the current image when nothing else is selected |
 | `Ctrl+S` | Save |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
 | `V` / `P` / `R` / `C` / `S` | Select / point / ROI / scan-corner / Shenton mode |
@@ -237,10 +245,11 @@ The UI treats a point as visible only when `visible = true`, `visibility > 0`, a
 | `F` | Fit image, fit ROI while using the ROI tool, or fit the scan region while using the scan tool |
 | `?` | Show keyboard shortcuts |
 | `H` | Toggle point labels |
+| Brightness/contrast sliders or right-side drag pad | Adjust display only; values are saved in `display_settings` |
 
 ## YOLO Pose Label Format
 
-The tool saves one same-folder `.txt` per image. Each file has 11 rows:
+The tool saves one same-folder `.txt` per image. Each file has 12 rows:
 
 ```text
 class_id cx cy w h left_x left_y left_vis right_x right_y right_vis
@@ -248,7 +257,7 @@ class_id cx cy w h left_x left_y left_vis right_x right_y right_vis
 
 Rules:
 
-- `class_id` is #1-#11 in zero-based order.
+- `class_id` is #1-#12 in zero-based order.
 - Coordinates are normalized to `[0, 1]`.
 - Visible points use `vis=2`.
 - Missing points use `0 0 0`.
