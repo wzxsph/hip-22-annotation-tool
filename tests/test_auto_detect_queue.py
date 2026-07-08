@@ -6,7 +6,7 @@ from PIL import Image
 from annotation_tool import auto_detection as auto_detection_module
 from annotation_tool.auto_detect_queue import AutoDetectItem, _process_item, replace_auto_detect_queue
 from annotation_tool.heuristics import AutoAnnotationResult
-from annotation_tool.schema import create_blank_annotation
+from annotation_tool.schema import create_blank_annotation, make_keypoint
 from annotation_tool.storage import load_annotation
 
 
@@ -53,3 +53,38 @@ def test_background_auto_detect_uses_enhanced_preprocess(monkeypatch, tmp_path):
     assert saved.auto_initialization["template_fallback"]["enabled"] is False
     assert saved.auto_initialization["template_fallback"]["filled_count"] == 0
     assert all(not point.visible for point in saved.keypoints.values())
+
+
+def test_background_auto_detect_infers_12_after_detection(monkeypatch, tmp_path):
+    image_path = tmp_path / "case.png"
+    _write_image(image_path)
+
+    def fake_estimate(image, *, min_visible_keypoints=None, include_partial=False):
+        annotation = create_blank_annotation("case.png", image.width, image.height)
+        annotation.keypoints["left_femoral_head_center"] = make_keypoint(
+            "left", "femoral_head_center", 10, 12, source="pose11_side", confidence=0.8
+        )
+        annotation.keypoints["left_femoral_neck_axis_center"] = make_keypoint(
+            "left", "femoral_neck_axis_center", 18, 20, source="pose11_side", confidence=0.7
+        )
+        return AutoAnnotationResult(
+            keypoints=annotation.keypoints,
+            warnings=[],
+            model_available=True,
+            source="test-model",
+            attempts=[{"strategy": "test", "visible_count": 2, "success": True}],
+            strategy="test",
+        )
+
+    monkeypatch.setattr(auto_detection_module, "estimate_keypoints_from_image", fake_estimate)
+
+    outcome = _process_item(AutoDetectItem(root=tmp_path, image_path=image_path, use_enhanced=False))
+
+    assert outcome == "done"
+    saved = load_annotation("case.png", tmp_path)
+    assert saved is not None
+    point = saved.keypoints["left_femoral_neck_axis_proximal"]
+    assert point.visible is True
+    assert point.x == 14
+    assert point.y == 16
+    assert point.source == "estimated"

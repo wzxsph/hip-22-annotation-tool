@@ -2399,8 +2399,14 @@ const App = {
 
   allKeys: () => {
     const keys = [];
+    const seen = new Set();
     App.state.schema.sides.forEach((side) => {
-      App.state.schema.landmarks.forEach((landmark) => keys.push(App.keyFor(side, landmark.name)));
+      App.state.schema.landmarks.forEach((landmark) => {
+        const key = App.keyFor(side, landmark.name);
+        if (seen.has(key)) return;
+        seen.add(key);
+        keys.push(key);
+      });
     });
     return keys;
   },

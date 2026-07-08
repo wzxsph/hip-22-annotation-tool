@@ -7,6 +7,7 @@ from PIL import Image
 from .heuristics import AutoAnnotationResult, estimate_keypoints_from_image
 from .image_processing import enhance_xray_image
 from .scan_like import map_result_from_scan, warp_for_scan_transform
+from .schema import fill_inferred_femoral_neck_axis_proximal
 
 
 def preprocess_label(*, use_enhanced: bool, use_scan: bool = False, use_roi: bool = False) -> str:
@@ -102,4 +103,5 @@ def estimate_keypoints_with_preprocessing(
         result = map_result_from_scan(result, scan_warp.inverse_matrix)
     else:
         result = map_result_from_roi(result, roi_used)
+    fill_inferred_femoral_neck_axis_proximal(result.keypoints)
     return result, preprocess_label(use_enhanced=use_enhanced, use_scan=scan_used is not None, use_roi=roi_used is not None), roi_used, scan_used

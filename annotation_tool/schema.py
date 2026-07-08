@@ -44,11 +44,53 @@ LANDMARK_BY_NAME = {item.name: item for item in LANDMARK_DEFS}
 OPTIONAL_LANDMARK_NUMBERS = frozenset({10, 11})
 REQUIRED_LANDMARK_DEFS = tuple(item for item in LANDMARK_DEFS if item.number not in OPTIONAL_LANDMARK_NUMBERS)
 OPTIONAL_LANDMARK_DEFS = tuple(item for item in LANDMARK_DEFS if item.number in OPTIONAL_LANDMARK_NUMBERS)
+FEMORAL_HEAD_CENTER_NAME = "femoral_head_center"
+FEMORAL_NECK_AXIS_DISTAL_NAME = "femoral_neck_axis_center"
+FEMORAL_NECK_AXIS_PROXIMAL_NAME = "femoral_neck_axis_proximal"
 
 
 def is_optional_landmark_name(name: str) -> bool:
     landmark = LANDMARK_BY_NAME.get(name)
     return bool(landmark and landmark.number in OPTIONAL_LANDMARK_NUMBERS)
+
+
+def fill_inferred_femoral_neck_axis_proximal(keypoints: dict[str, "Keypoint"]) -> int:
+    filled = 0
+    for side in SIDES:
+        head = keypoints.get(key_for(side, FEMORAL_HEAD_CENTER_NAME))
+        distal = keypoints.get(key_for(side, FEMORAL_NECK_AXIS_DISTAL_NAME))
+        target_key = key_for(side, FEMORAL_NECK_AXIS_PROXIMAL_NAME)
+        current = keypoints.get(target_key)
+        if (
+            current is not None
+            and current.visible
+            and current.x is not None
+            and current.y is not None
+            and current.source == "manual"
+        ):
+            continue
+        if not (
+            head is not None
+            and distal is not None
+            and head.visible
+            and distal.visible
+            and head.x is not None
+            and head.y is not None
+            and distal.x is not None
+            and distal.y is not None
+        ):
+            continue
+        keypoints[target_key] = make_keypoint(
+            side,
+            FEMORAL_NECK_AXIS_PROXIMAL_NAME,
+            (float(head.x) + float(distal.x)) / 2.0,
+            (float(head.y) + float(distal.y)) / 2.0,
+            source="estimated",
+            confidence=min(float(head.confidence or 1.0), float(distal.confidence or 1.0)),
+            annotator=current.annotator if current is not None else "",
+        )
+        filled += 1
+    return filled
 
 
 def utc_now() -> str:
@@ -613,6 +655,7 @@ def ensure_keypoint_template(annotation: Annotation) -> Annotation:
             )
             normalized[key] = Keypoint(**payload)
     annotation.keypoints = normalized
+    fill_inferred_femoral_neck_axis_proximal(annotation.keypoints)
     annotation.image.split = normalize_split(getattr(annotation.image, "split", "train"))
     normalize_connections(annotation)
     normalize_shenton(annotation)

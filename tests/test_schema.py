@@ -5,7 +5,9 @@ from annotation_tool.schema import (
     all_keypoint_ids,
     annotation_from_dict,
     create_blank_annotation,
+    fill_inferred_femoral_neck_axis_proximal,
     is_optional_landmark_name,
+    make_keypoint,
 )
 
 
@@ -31,6 +33,8 @@ def test_template_contains_24_keypoints_in_hospital_order():
     assert LANDMARK_DEFS[11].label_zh == "股骨颈轴中心近端"
     assert len(annotation.keypoints) == 24
     assert list(annotation.keypoints) == all_keypoint_ids()
+    assert all_keypoint_ids().count("left_femoral_neck_axis_proximal") == 1
+    assert all_keypoint_ids().count("right_femoral_neck_axis_proximal") == 1
     assert [item.number for item in OPTIONAL_LANDMARK_DEFS] == [10, 11]
     assert len(REQUIRED_LANDMARK_DEFS) == 10
     assert is_optional_landmark_name("obturator_upper") is True
@@ -47,6 +51,78 @@ def test_blank_points_are_saved_as_missing_not_removed():
     assert point.visible is False
     assert point.visibility == 0
     assert point.source == "missing"
+
+
+def test_inferred_12_uses_midpoint_of_3_and_7_without_overwriting_manual_point():
+    annotation = create_blank_annotation("case.png", 1000, 800)
+    annotation.keypoints["left_femoral_head_center"] = make_keypoint(
+        "left", "femoral_head_center", 100, 200, source="pose11_side", confidence=0.8
+    )
+    annotation.keypoints["left_femoral_neck_axis_center"] = make_keypoint(
+        "left", "femoral_neck_axis_center", 140, 260, source="pose11_side", confidence=0.7
+    )
+    annotation.keypoints["right_femoral_head_center"] = make_keypoint(
+        "right", "femoral_head_center", 300, 400, source="pose11_side", confidence=0.8
+    )
+    annotation.keypoints["right_femoral_neck_axis_center"] = make_keypoint(
+        "right", "femoral_neck_axis_center", 360, 420, source="pose11_side", confidence=0.7
+    )
+    annotation.keypoints["right_femoral_neck_axis_proximal"] = make_keypoint(
+        "right", "femoral_neck_axis_proximal", 999, 888, source="manual", confidence=1.0
+    )
+
+    filled = fill_inferred_femoral_neck_axis_proximal(annotation.keypoints)
+
+    left = annotation.keypoints["left_femoral_neck_axis_proximal"]
+    right = annotation.keypoints["right_femoral_neck_axis_proximal"]
+    assert filled == 1
+    assert left.visible is True
+    assert left.x == 120
+    assert left.y == 230
+    assert left.source == "estimated"
+    assert left.confidence == 0.7
+    assert right.x == 999
+    assert right.y == 888
+    assert right.source == "manual"
+
+
+def test_legacy_non_manual_12_is_recomputed_from_current_3_and_7():
+    annotation = annotation_from_dict(
+        {
+            "image": {"filename": "case.png", "width": 1000, "height": 800},
+            "keypoints": {
+                "left_femoral_head_center": {
+                    "x": 10,
+                    "y": 20,
+                    "visible": True,
+                    "visibility": 2,
+                    "source": "pose11_side",
+                    "confidence": 0.8,
+                },
+                "left_femoral_neck_axis_center": {
+                    "x": 30,
+                    "y": 60,
+                    "visible": True,
+                    "visibility": 2,
+                    "source": "pose11_side",
+                    "confidence": 0.7,
+                },
+                "left_femoral_neck_axis_proximal": {
+                    "x": 99,
+                    "y": 99,
+                    "visible": True,
+                    "visibility": 2,
+                    "source": "estimated",
+                    "confidence": 0.5,
+                },
+            },
+        }
+    )
+
+    point = annotation.keypoints["left_femoral_neck_axis_proximal"]
+    assert point.x == 20
+    assert point.y == 40
+    assert point.source == "estimated"
 
 
 def test_blank_annotation_has_default_editable_connections():

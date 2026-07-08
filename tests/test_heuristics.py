@@ -96,6 +96,17 @@ def test_auto_detect_retries_with_lower_threshold_after_empty_result(monkeypatch
     assert result.attempts[1]["success"] is True
 
 
+def test_decode_side11_infers_12_from_3_and_7_midpoint():
+    decoded = _decoded_with_visible_points(7)
+    heuristics_module.fill_inferred_femoral_neck_axis_proximal(decoded)
+
+    left = decoded["left_femoral_neck_axis_proximal"]
+    assert left.visible is True
+    assert left.x == 14
+    assert left.y == 24
+    assert left.source == "estimated"
+
+
 def test_auto_detect_no_result_keeps_blank_template(monkeypatch, tmp_path):
     weights = tmp_path / "model.pt"
     weights.write_bytes(b"fake")

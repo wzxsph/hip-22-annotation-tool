@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image, ImageEnhance, ImageOps
 
 from .paths import resource_path
-from .schema import LANDMARK_DEFS, SIDES, Keypoint, empty_keypoint, key_for, make_keypoint
+from .schema import LANDMARK_DEFS, SIDES, Keypoint, empty_keypoint, fill_inferred_femoral_neck_axis_proximal, key_for, make_keypoint
 
 
 SOURCE_NAME = "pose11_side"
@@ -351,7 +351,7 @@ def decode_side11_result(result: Any) -> Dict[str, Keypoint]:
         if detection is None:
             continue
         # Current bundled model predicts the original 11 landmarks per side.
-        # Newer schema-only landmarks remain missing until manually placed.
+        # #12 is inferred below from the decoded #3 and #7 points.
         for index, landmark in enumerate(LANDMARK_DEFS[:11]):
             points = detection["points"]
             point = points[index] if len(points) > index else [0, 0, 0]
@@ -369,4 +369,5 @@ def decode_side11_result(result: Any) -> Dict[str, Keypoint]:
                 source=SOURCE_NAME,
                 confidence=min(float(detection["confidence"]), point_confidence),
             )
+    fill_inferred_femoral_neck_axis_proximal(decoded)
     return decoded
