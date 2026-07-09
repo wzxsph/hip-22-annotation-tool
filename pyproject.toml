@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hip-22-annotation-tool"
-version = "0.3.2"
+version = "0.3.3"
 description = "FastAPI and Canvas annotation tool for hip X-ray 22-point labels"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"

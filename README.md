@@ -122,7 +122,7 @@ If the model file is missing or `ultralytics` is unavailable, the tool still ope
 
 ## DICOM, Enhanced Preview, And Shenton Prototype
 
-Version 0.3.2 adds a Windows release-path compatibility fix on top of the 0.3.1 manual confirmation workflows, streamlined default guide connections, and recoverable image deletion:
+Version 0.3.3 tightens the default guide layout and review ergonomics on top of the 0.3.2 Windows release-path compatibility fix, 0.3.1 manual confirmation workflows, and recoverable image deletion:
 
 - DICOM import reads `PixelSpacing` / `ImagerPixelSpacing`, applies rescale slope/intercept, window center/width, and `MONOCHROME1` inversion. Unsupported compressed/private formats are reported as warnings instead of stopping the whole folder import.
 - The annotation JSON stores non-PHI image metadata only: `source_format`, pixel spacing fields, spacing source, and DICOM warnings. It does not store `PatientName`, `PatientID`, `AccessionNumber`, or similar identifiers.
