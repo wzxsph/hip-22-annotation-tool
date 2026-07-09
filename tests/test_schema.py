@@ -128,16 +128,23 @@ def test_legacy_non_manual_12_is_recomputed_from_current_3_and_7():
 def test_blank_annotation_has_default_editable_connections():
     annotation = create_blank_annotation("case.png", 1000, 800)
 
-    assert len(annotation.connections) == 27
+    assert len(annotation.connections) == 11
     assert all(item.source == "default" for item in annotation.connections)
     pairs = {frozenset((item.point_a, item.point_b)) for item in annotation.connections}
     assert frozenset(("left_acetabular_outer", "left_triradiate_center")) in pairs
-    assert frozenset(("left_femoral_head_lateral", "left_femoral_head_center")) in pairs
+    assert frozenset(("left_acetabular_outer", "left_femoral_head_center")) in pairs
+    assert frozenset(("right_acetabular_outer", "right_femoral_head_center")) in pairs
     assert frozenset(("left_femoral_head_medial", "left_femoral_head_lateral")) in pairs
     assert frozenset(("left_femoral_neck_axis_proximal", "left_femoral_neck_axis_center")) in pairs
     assert frozenset(("right_femoral_head_medial", "right_femoral_head_lateral")) in pairs
     assert frozenset(("right_femoral_neck_axis_proximal", "right_femoral_neck_axis_center")) in pairs
-    assert frozenset(("right_obturator_upper", "left_obturator_upper")) in pairs
+    assert frozenset(("left_triradiate_center", "right_triradiate_center")) in pairs
+    assert frozenset(("left_femoral_head_center", "left_femoral_head_medial")) not in pairs
+    assert frozenset(("left_femoral_head_center", "left_femoral_head_lateral")) not in pairs
+    assert frozenset(("left_femoral_head_center", "left_femoral_neck_axis_center")) not in pairs
+    assert frozenset(("right_femoral_head_center", "right_femoral_head_medial")) not in pairs
+    assert frozenset(("right_femoral_head_center", "right_femoral_head_lateral")) not in pairs
+    assert frozenset(("right_femoral_head_center", "right_femoral_neck_axis_center")) not in pairs
     assert frozenset(("left_acetabular_outer", "left_teardrop_lower")) not in pairs
     assert frozenset(("right_acetabular_outer", "right_teardrop_lower")) not in pairs
     assert frozenset(("left_teardrop_lower", "right_teardrop_lower")) not in pairs
@@ -149,8 +156,76 @@ def test_legacy_annotation_without_connections_gets_defaults_but_empty_list_is_p
         {"image": {"filename": "case.png", "width": 100, "height": 100}, "keypoints": {}, "connections": []}
     )
 
-    assert len(legacy.connections) == 27
+    assert len(legacy.connections) == 11
     assert explicit_empty.connections == []
+
+
+def test_legacy_default_connections_remove_retired_edges_but_keep_manual_edges():
+    legacy = annotation_from_dict(
+        {
+            "image": {"filename": "case.png", "width": 100, "height": 100},
+            "keypoints": {},
+            "connections": [
+                {
+                    "id": "old_default_left_3_8",
+                    "point_a": "left_femoral_head_center",
+                    "point_b": "left_femoral_head_medial",
+                    "source": "default",
+                    "visible": True,
+                },
+                {
+                    "id": "old_default_left_3_9",
+                    "point_a": "left_femoral_head_center",
+                    "point_b": "left_femoral_head_lateral",
+                    "source": "default",
+                    "visible": True,
+                },
+                {
+                    "id": "old_default_left_3_7",
+                    "point_a": "left_femoral_head_center",
+                    "point_b": "left_femoral_neck_axis_center",
+                    "source": "default",
+                    "visible": True,
+                },
+                {
+                    "id": "manual_left_3_7",
+                    "point_a": "left_femoral_head_center",
+                    "point_b": "left_femoral_neck_axis_center",
+                    "source": "manual",
+                    "visible": True,
+                },
+                {
+                    "id": "keep_default_left_1_3",
+                    "point_a": "left_acetabular_outer",
+                    "point_b": "left_femoral_head_center",
+                    "source": "default",
+                    "visible": True,
+                },
+            ],
+        }
+    )
+
+    pairs_by_source = {(item.source, frozenset((item.point_a, item.point_b))) for item in legacy.connections}
+    assert (
+        "manual",
+        frozenset(("left_femoral_head_center", "left_femoral_neck_axis_center")),
+    ) in pairs_by_source
+    assert (
+        "default",
+        frozenset(("left_acetabular_outer", "left_femoral_head_center")),
+    ) in pairs_by_source
+    assert (
+        "default",
+        frozenset(("left_femoral_head_center", "left_femoral_head_medial")),
+    ) not in pairs_by_source
+    assert (
+        "default",
+        frozenset(("left_femoral_head_center", "left_femoral_head_lateral")),
+    ) not in pairs_by_source
+    assert (
+        "default",
+        frozenset(("left_femoral_head_center", "left_femoral_neck_axis_center")),
+    ) not in pairs_by_source
 
 
 def test_legacy_annotation_gets_shenton_defaults():

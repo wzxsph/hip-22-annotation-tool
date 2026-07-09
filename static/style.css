@@ -134,10 +134,12 @@ button.danger:hover {
 .workspace {
   min-height: 0;
   display: grid;
-  grid-template-columns: 330px minmax(420px, 1fr) 260px;
+  grid-template-columns: minmax(300px, 330px) minmax(0, 1fr) minmax(260px, 300px);
+  overflow: hidden;
 }
 
 .side-panel {
+  min-width: 0;
   min-height: 0;
   background: var(--panel);
   border-right: 1px solid var(--line);
@@ -146,8 +148,11 @@ button.danger:hover {
 }
 
 .review-panel {
+  min-width: 260px;
   border-left: 1px solid var(--line);
   border-right: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .panel-head {
@@ -370,18 +375,23 @@ button.danger:hover {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--canvas);
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
 }
 
 .canvas-toolbar {
   background: #2b2f31;
   color: white;
-  display: grid;
-  grid-template-columns: minmax(180px, 1.1fr) minmax(360px, 1.6fr) minmax(300px, 1.2fr);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 8px 12px;
   border-bottom: 1px solid #3a4044;
   font-size: 13px;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .canvas-primary,
@@ -391,10 +401,20 @@ button.danger:hover {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
-.display-controls,
+.canvas-primary {
+  flex: 1 1 180px;
+}
+
+.display-controls {
+  flex: 2 1 330px;
+  justify-content: flex-start;
+}
+
 .workflow-strip {
+  flex: 1 1 260px;
   justify-content: flex-end;
 }
 
@@ -410,8 +430,9 @@ button.danger:hover {
 }
 
 .status-text {
-  min-width: 92px;
+  min-width: 80px;
   max-width: 180px;
+  flex: 0 1 180px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -419,7 +440,8 @@ button.danger:hover {
 }
 
 .toolbar-slider {
-  min-width: 146px;
+  min-width: 128px;
+  flex: 1 1 150px;
   display: grid;
   grid-template-columns: 46px minmax(70px, 1fr) 42px;
   align-items: center;
@@ -453,6 +475,10 @@ button.danger:hover {
 }
 
 .workflow-strip small {
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: #c7d0d5;
   white-space: nowrap;
 }
@@ -1161,11 +1187,10 @@ dialog::backdrop {
 
 @media (max-width: 1180px) {
   .workspace {
-    grid-template-columns: 300px minmax(360px, 1fr);
+    grid-template-columns: 300px minmax(0, 1fr);
   }
 
   .canvas-toolbar {
-    grid-template-columns: 1fr;
     align-items: stretch;
   }
 

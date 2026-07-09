@@ -1279,27 +1279,20 @@ const App = {
 
   DEFAULT_CONNECTION_PAIRS: [
     ["left_femoral_shaft_prox", "left_femoral_shaft_dist"],
-    ["left_femoral_head_medial", "left_femoral_head_center"],
-    ["left_femoral_head_center", "left_femoral_head_lateral"],
     ["left_femoral_head_medial", "left_femoral_head_lateral"],
-    ["left_femoral_head_center", "left_femoral_neck_axis_center"],
     ["left_femoral_neck_axis_proximal", "left_femoral_neck_axis_center"],
     ["left_acetabular_outer", "left_triradiate_center"],
+    ["left_acetabular_outer", "left_femoral_head_center"],
     ["right_femoral_shaft_prox", "right_femoral_shaft_dist"],
-    ["right_femoral_head_medial", "right_femoral_head_center"],
-    ["right_femoral_head_center", "right_femoral_head_lateral"],
     ["right_femoral_head_medial", "right_femoral_head_lateral"],
-    ["right_femoral_head_center", "right_femoral_neck_axis_center"],
     ["right_femoral_neck_axis_proximal", "right_femoral_neck_axis_center"],
     ["right_acetabular_outer", "right_triradiate_center"],
+    ["right_acetabular_outer", "right_femoral_head_center"],
     ["left_triradiate_center", "right_triradiate_center"],
   ],
 
   ensureDefaultConnections: (annotation) => {
     const manual = (annotation.connections || []).filter((c) => c.source !== "default");
-    const existingDefaultPairs = new Set(
-      (annotation.connections || []).filter((c) => c.source === "default").map((c) => `${c.point_a}__${c.point_b}`)
-    );
     const defaults = App.DEFAULT_CONNECTION_PAIRS.map(([a, b]) => {
       const old = (annotation.connections || []).find(
         (c) => c.source === "default" && c.point_a === a && c.point_b === b
@@ -2084,6 +2077,22 @@ const App = {
     App.scheduleAutosave();
   },
 
+  beginDragShentonPoint: (hitShenton, pos) => {
+    if (!hitShenton) return false;
+    App.state.selectedShentonPoint = hitShenton;
+    App.state.shentonSide = hitShenton.side;
+    App.state.shentonSegment = hitShenton.segment;
+    App.state.selectedPoint = null;
+    App.state.selectedConnection = null;
+    App.state.selectedScanCorner = null;
+    App.state.isDraggingShenton = true;
+    App.state.dragStarted = false;
+    App.state.lastMouse = pos;
+    App.refreshAll();
+    App.setStatus("拖动沈通线点可调整曲线");
+    return true;
+  },
+
   handleMouseDown: (event) => {
     if (event.button === 2 || !App.state.annotation || !App.state.image) return;
     const pos = App.mousePos(event);
@@ -2120,16 +2129,7 @@ const App = {
     }
     if (App.state.activeTool === "shenton") {
       const hitShenton = App.hitTestShentonPoint(pos.x, pos.y);
-      if (hitShenton) {
-        App.state.selectedShentonPoint = hitShenton;
-        App.state.selectedPoint = null;
-        App.state.selectedConnection = null;
-        App.state.isDraggingShenton = true;
-        App.state.dragStarted = false;
-        App.state.lastMouse = pos;
-        App.refreshAll();
-        return;
-      }
+      if (App.beginDragShentonPoint(hitShenton, pos)) return;
       App.addShentonPoint(imagePos);
       return;
     }
@@ -2153,6 +2153,8 @@ const App = {
       }
       return;
     }
+    const hitShenton = App.hitTestShentonPoint(pos.x, pos.y);
+    if (hitShenton && App.beginDragShentonPoint(hitShenton, pos)) return;
     if (hitPoint) {
       App.selectPoint(hitPoint);
       App.state.activePointKey = hitPoint;
@@ -2188,6 +2190,7 @@ const App = {
       segment.annotator = document.getElementById("annotatorInput").value.trim() || "default";
       App.renderShentonPanel();
       App.renderMeasurements();
+      App.updateSelectedBox();
     } else if (App.state.isDraggingScanCorner && App.state.selectedScanCorner !== null) {
       App.normalizeScanTransform(App.state.annotation);
       const scan = App.state.annotation?.scan_transform;

@@ -117,6 +117,14 @@ def landmark_name_by_number(number: int) -> str:
     return LANDMARK_DEFS[number - 1].name
 
 
+RETIRED_DEFAULT_CONNECTION_NUMBER_PAIRS: tuple[tuple[int, int], ...] = ((3, 8), (3, 9), (3, 7))
+RETIRED_DEFAULT_CONNECTION_EDGES: frozenset[frozenset[str]] = frozenset(
+    frozenset((key_for(side, landmark_name_by_number(point_a)), key_for(side, landmark_name_by_number(point_b))))
+    for side in SIDES
+    for point_a, point_b in RETIRED_DEFAULT_CONNECTION_NUMBER_PAIRS
+)
+
+
 class ExtraModel(BaseModel):
     if ConfigDict is not None:
         model_config = ConfigDict(extra="allow")
@@ -365,23 +373,13 @@ def default_connections(*, annotator: str = "") -> list[Connection]:
     for side in SIDES:
         prefix = "左" if side == "left" else "右"
         side_id = f"default_{side}"
-        for a, b in ((1, 2), (2, 3), (3, 1)):
-            add(side_key(side, a), side_key(side, b), f"{prefix} #1-#2-#3", f"{side_id}_triangle")
-        for a, b in ((9, 3), (3, 8)):
-            add(side_key(side, a), side_key(side, b), f"{prefix} #9-#3-#8", f"{side_id}_head")
-        for a, b in ((1, 3), (3, 7), (7, 5), (5, 6), (6, 11), (11, 1)):
-            add(side_key(side, a), side_key(side, b), f"{prefix} #1-#3-#7-#5-#6-#11", f"{side_id}_loop")
+        add(side_key(side, 5), side_key(side, 6), f"{prefix} #5-#6", f"{side_id}_shaft_axis")
         add(side_key(side, 8), side_key(side, 9), f"{prefix} #8-#9", f"{side_id}_head_width")
         add(side_key(side, 12), side_key(side, 7), f"{prefix} #12-#7", f"{side_id}_neck_axis")
+        add(side_key(side, 1), side_key(side, 2), f"{prefix} #1-#2", f"{side_id}_acetabulum")
+        add(side_key(side, 1), side_key(side, 3), f"{prefix} #1-#3", f"{side_id}_acetabulum_head")
 
-    image_path = [
-        side_key("left", 4),
-        side_key("left", 10),
-        side_key("right", 10),
-        side_key("right", 4),
-    ]
-    for point_a, point_b in zip(image_path, image_path[1:]):
-        add(point_a, point_b, "图像左 #4-#10 到图像右 #10-#4", "default_cross_image")
+    add(side_key("left", 2), side_key("right", 2), "双侧 #2-#2", "default_cross_image")
     return connections
 
 
@@ -438,13 +436,16 @@ def normalize_connections(annotation: Annotation) -> Annotation:
         point_b = payload.get("point_b") or payload.get("to") or payload.get("b")
         if point_a not in annotation.keypoints or point_b not in annotation.keypoints or point_a == point_b:
             continue
+        source = str(payload.get("source") or "manual")
+        if source == "default" and frozenset((point_a, point_b)) in RETIRED_DEFAULT_CONNECTION_EDGES:
+            continue
         payload.update(
             {
-                "id": payload.get("id") or connection_id(point_a, point_b, str(payload.get("source") or "manual")),
+                "id": payload.get("id") or connection_id(point_a, point_b, source),
                 "point_a": point_a,
                 "point_b": point_b,
                 "label": payload.get("label") or "",
-                "source": payload.get("source") or "manual",
+                "source": source,
                 "visible": bool(payload.get("visible", payload.get("enabled", True))),
                 "updated_at": payload.get("updated_at") or utc_now(),
                 "annotator": payload.get("annotator") or annotator,
