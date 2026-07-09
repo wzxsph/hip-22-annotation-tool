@@ -16,7 +16,12 @@ from PIL import Image
 from pydantic import BaseModel
 
 from .auto_detect_queue import auto_detect_status, replace_auto_detect_queue
-from .auto_detection import estimate_keypoints_with_preprocessing
+from .auto_detection import (
+    AUTO_DETECT_POLICY_LABEL,
+    clear_non_manual_keypoints,
+    estimate_keypoints_original_then_enhanced,
+    should_retry_auto_detection,
+)
 from .completion import PROGRESS_STATUS_VERSION, annotation_progress
 from .dicom_utils import is_dicom_path
 from .image_io import is_supported_image_path, read_supported_image
@@ -680,26 +685,12 @@ def _auto_annotation_for_image(
     annotation.image.split = normalize_split(split)
     _apply_image_metadata(annotation, metadata or {})
     if settings.get("auto_detect", True):
-        result, image_preprocess, roi_used, scan_used = estimate_keypoints_with_preprocessing(image, use_enhanced=False)
-        model_visible_count = visible_keypoint_count(result.keypoints)
-        annotation.keypoints = result.keypoints
-        template_fallback = _disabled_template_fallback(
-            reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
-            model_visible_count=model_visible_count,
-        )
-        warnings = list(result.warnings)
-        annotation.auto_initialization = {
-            "source": result.source,
-            "strategy": result.strategy,
-            "attempts": result.attempts,
-            "warnings": warnings,
-            "image_preprocess": image_preprocess,
-            "roi_crop_used": roi_used,
-            "scan_transform_used": scan_used,
-            "model_visible_count": model_visible_count,
-            "template_fallback": template_fallback,
-            "created_at": annotation.annotator.created_at,
-        }
+        run = estimate_keypoints_original_then_enhanced(image)
+        if run.usable:
+            annotation.keypoints = run.result.keypoints
+        else:
+            annotation = clear_non_manual_keypoints(annotation)
+        annotation.auto_initialization = _auto_initialization_from_run(run, created_at=annotation.annotator.created_at)
     else:
         annotation.auto_initialization = {
             "source": "disabled",
@@ -734,6 +725,46 @@ def _disabled_template_fallback(*, reason: str, model_visible_count: int) -> dic
         "model_visible_count": int(model_visible_count),
         "note": "Template fallback is disabled; missing model points remain missing for manual annotation.",
     }
+
+
+def _model_visible_count_for_run(run) -> int:
+    return visible_keypoint_count(run.result.keypoints) if run.usable else 0
+
+
+def _auto_initialization_from_run(
+    run,
+    *,
+    created_at: str,
+    manual_retry: bool = False,
+    include_partial: bool | None = None,
+    preserve_manual: bool | None = None,
+) -> dict:
+    model_visible_count = _model_visible_count_for_run(run)
+    result = run.result
+    payload = {
+        "source": result.source,
+        "strategy": result.strategy,
+        "attempts": result.attempts,
+        "warnings": list(result.warnings),
+        "image_preprocess": run.image_preprocess,
+        "preprocess_policy": AUTO_DETECT_POLICY_LABEL,
+        "preprocess_attempts": run.preprocess_attempts,
+        "roi_crop_used": run.roi_used,
+        "scan_transform_used": run.scan_used,
+        "model_visible_count": model_visible_count,
+        "template_fallback": _disabled_template_fallback(
+            reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
+            model_visible_count=model_visible_count,
+        ),
+        "created_at": created_at,
+    }
+    if manual_retry:
+        payload["manual_retry"] = True
+    if include_partial is not None:
+        payload["include_partial"] = include_partial
+    if preserve_manual is not None:
+        payload["preserve_manual"] = preserve_manual
+    return payload
 
 
 def _count_manual_keypoints(annotation: Annotation) -> int:
@@ -891,6 +922,8 @@ async def open_folder(request: OpenFolderRequest):
         else:
             imported_or_saved += 1
             manifest_item = manifest_image_for_path(image_path, annotation=annotation, root=root, split=image_split)
+            if settings.get("auto_detect", True) and should_retry_auto_detection(annotation):
+                queued.append(image_path)
         manifest_by_id[manifest_item.id] = manifest_item
     manifest = Manifest(images=list(manifest_by_id.values()))
     save_manifest(manifest, root)
@@ -935,13 +968,29 @@ async def load_annotation_by_name(filename: str):
     split = _split_from_image_path(image_path)
     image, metadata = _read_image_record(image_path)
     annotation = _existing_annotation_for_image(image_path, root=root, split=split, persist_imported=True)
+    settings = load_settings()
     if annotation is None:
-        annotation = _blank_annotation_for_image(filename, image, split=split, metadata=metadata)
-        upsert_manifest_image(image_path, annotation=None, root=root, split=split)
+        if settings.get("auto_detect", True):
+            annotation = _auto_annotation_for_image(filename, image, root=root, split=split, metadata=metadata)
+            save_annotation(annotation, root)
+            upsert_manifest_image(image_path, annotation=annotation, root=root, split=split)
+        else:
+            annotation = _blank_annotation_for_image(filename, image, split=split, metadata=metadata)
+            upsert_manifest_image(image_path, annotation=None, root=root, split=split)
     else:
         annotation.image.width = image.width
         annotation.image.height = image.height
         _apply_image_metadata(annotation, metadata)
+        if settings.get("auto_detect", True) and should_retry_auto_detection(annotation):
+            run = estimate_keypoints_original_then_enhanced(image)
+            if run.usable:
+                annotation.keypoints = run.result.keypoints
+            else:
+                annotation = clear_non_manual_keypoints(annotation)
+            annotation.auto_initialization = _auto_initialization_from_run(run, created_at=annotation.annotator.created_at)
+            annotation.measurements_snapshot = compute_measurements(annotation)
+            save_annotation(annotation, root)
+            upsert_manifest_image(image_path, annotation=annotation, root=root, split=split)
     payload = model_to_dict(annotation)
     payload["image_url"] = _image_url_for_path(image_path)
     return payload
@@ -1092,49 +1141,37 @@ async def auto_detect_image(request: AutoDetectImageRequest):
         existing.image.split = normalize_split(split)
     _apply_image_metadata(existing, metadata)
 
-    result, image_preprocess, roi_used, scan_used = estimate_keypoints_with_preprocessing(
+    run = estimate_keypoints_original_then_enhanced(
         image,
-        use_enhanced=request.use_enhanced,
         use_scan=request.use_scan,
         min_visible_keypoints=1,
         include_partial=request.include_partial,
         roi_crop=existing.roi_crop if request.use_roi else None,
         scan_transform=existing.scan_transform,
     )
-    model_visible_count = visible_keypoint_count(result.keypoints)
+    result = run.result
+    model_visible_count = _model_visible_count_for_run(run)
     auto_annotation = create_blank_annotation(filename, image.width, image.height, annotator=existing.annotator.user_id)
     auto_annotation.image.split = normalize_split(split)
     auto_annotation.keypoints = result.keypoints
     auto_annotation = ensure_keypoint_template(auto_annotation)
     preserved_manual = _count_manual_keypoints(existing) if request.preserve_manual else 0
 
-    if model_visible_count > 0:
+    if run.usable:
         annotation = _merge_auto_keypoints(existing, auto_annotation, preserve_manual=request.preserve_manual)
     else:
-        annotation = existing
-    template_fallback = _disabled_template_fallback(
-        reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
-        model_visible_count=model_visible_count,
-    )
+        annotation = clear_non_manual_keypoints(existing) if request.preserve_manual else auto_annotation
     applied_visible_count = _count_visible_keypoints(annotation)
-    applied = model_visible_count > 0
+    applied = run.usable
 
     warnings = list(result.warnings)
-    annotation.auto_initialization = {
-        "source": result.source,
-        "strategy": result.strategy,
-        "attempts": result.attempts,
-        "warnings": warnings,
-        "manual_retry": True,
-        "include_partial": request.include_partial,
-        "preserve_manual": request.preserve_manual,
-        "image_preprocess": image_preprocess,
-        "roi_crop_used": roi_used,
-        "scan_transform_used": scan_used,
-        "model_visible_count": model_visible_count,
-        "template_fallback": template_fallback,
-        "created_at": annotation.annotator.created_at,
-    }
+    annotation.auto_initialization = _auto_initialization_from_run(
+        run,
+        created_at=annotation.annotator.created_at,
+        manual_retry=True,
+        include_partial=request.include_partial,
+        preserve_manual=request.preserve_manual,
+    )
     _apply_image_metadata(annotation, metadata)
     annotation.measurements_snapshot = compute_measurements(annotation)
     save_annotation(annotation, root)
@@ -1151,10 +1188,12 @@ async def auto_detect_image(request: AutoDetectImageRequest):
         "applied_visible_count": applied_visible_count,
         "applied": applied,
         "preserved_manual_count": preserved_manual,
-        "image_preprocess": image_preprocess,
-        "roi_crop_used": roi_used,
-        "scan_transform_used": scan_used,
-        "template_fallback": template_fallback,
+        "image_preprocess": run.image_preprocess,
+        "preprocess_policy": AUTO_DETECT_POLICY_LABEL,
+        "preprocess_attempts": run.preprocess_attempts,
+        "roi_crop_used": run.roi_used,
+        "scan_transform_used": run.scan_used,
+        "template_fallback": annotation.auto_initialization["template_fallback"],
         "annotation_path": str(annotation_path(annotation.image.filename, root).relative_to(root)),
         "label_path": str(saved_label.relative_to(root)) if saved_label.is_relative_to(root) else str(saved_label),
     }

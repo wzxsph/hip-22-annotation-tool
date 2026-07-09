@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import time
 
 from fastapi.testclient import TestClient
 import numpy as np
@@ -641,7 +642,7 @@ def test_manual_auto_detect_preserves_existing_manual_points(monkeypatch, tmp_pa
         assert res.status_code == 200
         payload = res.json()
         assert payload["auto_detect"]["applied"] is True
-        assert payload["auto_detect"]["image_preprocess"] == "hip_demo_enhanced"
+        assert payload["auto_detect"]["image_preprocess"] == "original"
         assert payload["auto_detect"]["visible_count"] == 2
         saved = load_annotation("case.png", workspace)
         assert saved is not None
@@ -704,6 +705,147 @@ def test_manual_auto_detect_no_result_records_warning_without_overwriting(monkey
         save_settings(old_settings)
 
 
+def test_load_by_name_auto_detects_missing_annotation_when_enabled(monkeypatch, tmp_path):
+    old_settings = load_settings()
+    client = TestClient(app)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_image(workspace / "case.png")
+
+    def fake_estimate(image, *, min_visible_keypoints=None, include_partial=False):
+        detected = create_blank_annotation("case.png", image.width, image.height, annotator="doctor-a")
+        detected.keypoints["left_acetabular_outer"] = make_keypoint(
+            "left", "acetabular_outer", 5, 6, source="pose11_side", confidence=0.8
+        )
+        detected.keypoints["right_acetabular_outer"] = make_keypoint(
+            "right", "acetabular_outer", 70, 30, source="pose11_side", confidence=0.8
+        )
+        return AutoAnnotationResult(
+            keypoints=detected.keypoints,
+            warnings=[],
+            model_available=True,
+            source="yolo11n-best-side11",
+            attempts=[{"strategy": "test", "visible_count": 2, "success": True}],
+            strategy="test",
+        )
+
+    monkeypatch.setattr(auto_detection_module, "estimate_keypoints_from_image", fake_estimate)
+    try:
+        save_settings({"dataset_root": str(workspace), "auto_detect": True})
+
+        res = client.get("/api/annotation/load-by-name", params={"filename": "case.png"})
+
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["auto_initialization"]["image_preprocess"] == "original"
+        saved = load_annotation("case.png", workspace)
+        assert saved is not None
+        assert saved.keypoints["left_acetabular_outer"].visible is True
+        assert saved.keypoints["right_acetabular_outer"].visible is True
+    finally:
+        save_settings(old_settings)
+
+
+def test_open_folder_requeues_existing_blank_dicom_annotation_when_auto_detect_enabled(monkeypatch, tmp_path):
+    old_settings = load_settings()
+    client = TestClient(app)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    image_path = workspace / "late_case.dcm"
+    write_test_dicom(image_path)
+    blank = create_blank_annotation("late_case.dcm", 16, 12, annotator="doctor-a")
+    blank.auto_initialization = {"source": "queued", "warnings": [], "created_at": blank.annotator.created_at}
+    save_annotation(blank, workspace)
+    calls = []
+
+    def fake_estimate(image, *, min_visible_keypoints=None, include_partial=False):
+        calls.append(image.size)
+        detected = create_blank_annotation("late_case.dcm", image.width, image.height, annotator="doctor-a")
+        detected.keypoints["left_acetabular_outer"] = make_keypoint(
+            "left", "acetabular_outer", 4, 6, source="pose11_side", confidence=0.8
+        )
+        detected.keypoints["right_acetabular_outer"] = make_keypoint(
+            "right", "acetabular_outer", 12, 6, source="pose11_side", confidence=0.8
+        )
+        return AutoAnnotationResult(
+            keypoints=detected.keypoints,
+            warnings=[],
+            model_available=True,
+            source="yolo11n-best-side11",
+            attempts=[{"strategy": "test", "visible_count": 2, "success": True}],
+            strategy="test",
+        )
+
+    monkeypatch.setattr(auto_detection_module, "estimate_keypoints_from_image", fake_estimate)
+    try:
+        save_settings({"dataset_root": str(workspace), "auto_detect": True})
+
+        res = client.post("/api/annotation/open-folder", json={"folder_path": str(workspace)})
+
+        assert res.status_code == 200
+        assert res.json()["queued"] == 1
+        saved = None
+        for _ in range(50):
+            saved = load_annotation("late_case.dcm", workspace)
+            if saved and saved.keypoints["left_acetabular_outer"].visible and saved.keypoints["right_acetabular_outer"].visible:
+                break
+            time.sleep(0.05)
+        assert calls == [(16, 12)]
+        assert saved is not None
+        assert saved.auto_initialization["image_preprocess"] == "original"
+        assert saved.keypoints["left_acetabular_outer"].visible is True
+        assert saved.keypoints["right_acetabular_outer"].visible is True
+    finally:
+        save_settings(old_settings)
+
+
+def test_load_by_name_retries_existing_blank_dicom_annotation_when_auto_detect_enabled(monkeypatch, tmp_path):
+    old_settings = load_settings()
+    client = TestClient(app)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    image_path = workspace / "case.dcm"
+    write_test_dicom(image_path)
+    blank = create_blank_annotation("case.dcm", 16, 12, annotator="doctor-a")
+    blank.auto_initialization = {"source": "queued", "warnings": [], "created_at": blank.annotator.created_at}
+    save_annotation(blank, workspace)
+
+    def fake_estimate(image, *, min_visible_keypoints=None, include_partial=False):
+        detected = create_blank_annotation("case.dcm", image.width, image.height, annotator="doctor-a")
+        detected.keypoints["left_acetabular_outer"] = make_keypoint(
+            "left", "acetabular_outer", 4, 6, source="pose11_side", confidence=0.8
+        )
+        detected.keypoints["right_acetabular_outer"] = make_keypoint(
+            "right", "acetabular_outer", 12, 6, source="pose11_side", confidence=0.8
+        )
+        return AutoAnnotationResult(
+            keypoints=detected.keypoints,
+            warnings=[],
+            model_available=True,
+            source="yolo11n-best-side11",
+            attempts=[{"strategy": "test", "visible_count": 2, "success": True}],
+            strategy="test",
+        )
+
+    monkeypatch.setattr(auto_detection_module, "estimate_keypoints_from_image", fake_estimate)
+    try:
+        save_settings({"dataset_root": str(workspace), "auto_detect": True})
+
+        res = client.get("/api/annotation/load-by-name", params={"filename": "case.dcm"})
+
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["auto_initialization"]["image_preprocess"] == "original"
+        assert payload["keypoints"]["left_acetabular_outer"]["visible"] is True
+        assert payload["keypoints"]["right_acetabular_outer"]["visible"] is True
+        saved = load_annotation("case.dcm", workspace)
+        assert saved is not None
+        assert saved.keypoints["left_acetabular_outer"].visible is True
+        assert saved.keypoints["right_acetabular_outer"].visible is True
+    finally:
+        save_settings(old_settings)
+
+
 def test_manual_auto_detect_uses_roi_and_maps_points_to_original_coordinates(monkeypatch, tmp_path):
     old_settings = load_settings()
     client = TestClient(app)
@@ -728,6 +870,9 @@ def test_manual_auto_detect_uses_roi_and_maps_points_to_original_coordinates(mon
     def fake_estimate(image, *, min_visible_keypoints=None, include_partial=False):
         seen_sizes.append(image.size)
         detected = create_blank_annotation("case.png", image.width, image.height, annotator="doctor-a")
+        detected.keypoints["left_acetabular_outer"] = make_keypoint(
+            "left", "acetabular_outer", 8, 7, source="pose11_side", confidence=0.8
+        )
         detected.keypoints["right_acetabular_outer"] = make_keypoint(
             "right", "acetabular_outer", 5, 6, source="pose11_side", confidence=0.8
         )
@@ -752,7 +897,7 @@ def test_manual_auto_detect_uses_roi_and_maps_points_to_original_coordinates(mon
         assert payload["auto_detect"]["roi_crop_used"]["x"] == 10.0
         assert payload["auto_detect"]["scan_transform_used"] is None
         assert payload["auto_detect"]["image_preprocess"] == "roi_crop+original"
-        assert payload["auto_detect"]["visible_count"] == 1
+        assert payload["auto_detect"]["visible_count"] == 2
         saved = load_annotation("case.png", workspace)
         assert saved is not None
         point = saved.keypoints["right_acetabular_outer"]
@@ -800,6 +945,9 @@ def test_manual_auto_detect_prefers_roi_over_scan_transform(monkeypatch, tmp_pat
     def fake_estimate(image, *, min_visible_keypoints=None, include_partial=False):
         seen_sizes.append(image.size)
         detected = create_blank_annotation("case.png", image.width, image.height, annotator="doctor-a")
+        detected.keypoints["left_acetabular_outer"] = make_keypoint(
+            "left", "acetabular_outer", 8, 7, source="pose11_side", confidence=0.8
+        )
         detected.keypoints["right_acetabular_outer"] = make_keypoint(
             "right", "acetabular_outer", 5, 6, source="pose11_side", confidence=0.8
         )
@@ -863,6 +1011,10 @@ def test_manual_auto_detect_enhanced_roi_preprocess_label(monkeypatch, tmp_path)
         detected.keypoints["right_acetabular_outer"] = make_keypoint(
             "right", "acetabular_outer", 5, 6, source="pose11_side", confidence=0.8
         )
+        if len(seen_sizes) > 1:
+            detected.keypoints["left_acetabular_outer"] = make_keypoint(
+                "left", "acetabular_outer", 8, 7, source="pose11_side", confidence=0.8
+            )
         return AutoAnnotationResult(
             keypoints=detected.keypoints,
             warnings=[],
@@ -880,7 +1032,7 @@ def test_manual_auto_detect_enhanced_roi_preprocess_label(monkeypatch, tmp_path)
 
         assert res.status_code == 200
         payload = res.json()
-        assert seen_sizes == [(40, 30)]
+        assert seen_sizes == [(40, 30), (40, 30)]
         assert payload["auto_detect"]["roi_crop_used"]["x"] == 10.0
         assert payload["auto_detect"]["image_preprocess"] == "roi_crop+hip_demo_enhanced"
     finally:
@@ -915,6 +1067,9 @@ def test_manual_auto_detect_uses_scan_transform_and_maps_points_to_original_coor
         detected = create_blank_annotation("case.png", image.width, image.height, annotator="doctor-a")
         detected.keypoints["left_acetabular_outer"] = make_keypoint(
             "left", "acetabular_outer", 0, 0, source="pose11_side", confidence=0.8
+        )
+        detected.keypoints["right_acetabular_outer"] = make_keypoint(
+            "right", "acetabular_outer", 30, 20, source="pose11_side", confidence=0.8
         )
         return AutoAnnotationResult(
             keypoints=detected.keypoints,

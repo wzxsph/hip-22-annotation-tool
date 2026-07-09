@@ -38,8 +38,8 @@
     <h2>2. 标注流程</h2>
     <ol>
       <li>逐张检查自动识别点位，拖动错误点，缺失点用“放点”补齐。</li>
-      <li>完成后点击“确认关键点完成”；Shenton 曲线完成后点击“确认沈通线完成”。</li>
-      <li>保存会写入 annotations 目录下的 JSON，同时在图片同目录写入 YOLO txt。</li>
+      <li>完成后点击顶部“确认完成”；系统会保存并同时确认关键点与 Shenton 完成。</li>
+      <li>确认完成会写入 annotations 目录下的 JSON，同时在图片同目录写入 YOLO txt。</li>
       <li>若开启“自动保存”，当前图片修改后会自动保存；亮度/对比度设置也会写入 JSON 的 <code>display_settings</code>。</li>
     </ol>
 
@@ -88,9 +88,8 @@
         <tr><td>C</td><td>扫描四角校正。</td></tr>
         <tr><td>S</td><td>Shenton 曲线。</td></tr>
         <tr><td>E</td><td>原图/增强图切换。</td></tr>
-        <tr><td>D</td><td>原图识别。</td></tr>
         <tr><td>F</td><td>适配当前图像。</td></tr>
-        <tr><td>Ctrl+S</td><td>保存当前标注。</td></tr>
+        <tr><td>Ctrl+S</td><td>保存当前草稿。</td></tr>
         <tr><td>Delete</td><td>删除选中点/线；无选中项时删除当前图片。</td></tr>
         <tr><td>← / →</td><td>上一张 / 下一张。</td></tr>
       </tbody>

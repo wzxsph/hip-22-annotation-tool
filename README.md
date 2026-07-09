@@ -16,8 +16,8 @@ This project is a research annotation aid. It is not a medical device, does not 
 - Renders DICOM to Canvas without writing derived PNG files into the submitted folder, and stores PixelSpacing metadata without PHI fields.
 - Preserves existing JSON or YOLO sidecar labels and never overwrites reviewed annotations during auto-detection.
 - Uses the bundled `models/yolo11n-best.pt` weight by default for model-assisted initialization.
-- Provides an `Auto Detect` button for retrying the current image without discarding manual corrections.
-- Provides an enhanced preview and enhanced auto-detect retry based on the hip_demo-style X-ray contrast pipeline.
+- Runs model-assisted initialization automatically when auto-detect is enabled: original-image detection is tried first, then enhanced detection is used only when either side has no required keypoint.
+- Provides an enhanced preview based on the hip_demo-style X-ray contrast pipeline.
 - Opens images in original view by default, with one-click enhanced-image comparison.
 - Caches enhanced/DICOM display PNGs under local app data so repeated image switching does not recompute enhancement every time.
 - Supports a non-destructive ROI crop box for cluttered-background images; recognition can retry inside the ROI while saved coordinates remain in the original image coordinate system.
@@ -127,14 +127,13 @@ Version 0.3.3 tightens the default guide layout and review ergonomics on top of 
 - DICOM import reads `PixelSpacing` / `ImagerPixelSpacing`, applies rescale slope/intercept, window center/width, and `MONOCHROME1` inversion. Unsupported compressed/private formats are reported as warnings instead of stopping the whole folder import.
 - The annotation JSON stores non-PHI image metadata only: `source_format`, pixel spacing fields, spacing source, and DICOM warnings. It does not store `PatientName`, `PatientID`, `AccessionNumber`, or similar identifiers.
 - The UI opens in `Original` viewing by default and can switch to `Enhanced` for comparison. Enhanced view uses conservative grayscale normalization and contrast adjustment for easier boundary review. It does not change coordinates or overwrite the source image.
-- Folder import queues model-assisted initialization with enhanced preprocessing by default; `Enhanced Detect` uses the same preprocessing path for current-image retries.
+- Folder import queues model-assisted initialization with original-first/enhanced-fallback preprocessing; empty or previously failed auto annotations are retried, while manual or confirmed work is preserved.
 - If a reviewer draws an ROI crop, current-image auto-detect retries inside that ROI and maps detected points back to the original image coordinates.
 - If a reviewer marks four scan corners, current-image auto-detect first warps the image into a scan-like view, then maps detected points back to the original image coordinates. This is intended for phone-shot images with visible film borders.
 - If model output is unavailable or incomplete, missing points remain missing. The tool no longer fills absent model output with template guesses. #12 is the only inferred point: it is recalculated from same-side #3 and #7 unless manually edited.
 - The 11 default anatomical guide connections include #1-#3, femoral head width #8-#9, femoral neck axis #12-#7, femoral shaft #5-#6, acetabular #1-#2, and cross-side #2-#2. The retired default spokes #3-#8, #3-#9, and #3-#7 are cleaned from legacy default annotations but preserved if a reviewer drew them manually. Default connections, manual connections, Shenton curves, measurement lines, point labels, and optional #10/#11 point display each have separate toggles.
 - The `Delete image` and `Delete selected` actions move images plus same-name annotation JSON and YOLO txt files into a `trash` folder beside the image, so accidental deletion can be restored from the app.
-- Manual keypoint confirmation: reviewers must explicitly click "确认关键点完成" before keypoints count as complete; the 20 required points drive progress, while #10/#11 remain optional.
-- Manual Shenton confirmation: a matching "确认沈通线完成" button requires explicit reviewer sign-off for Shenton curves. Shenton & Measurement panel is collapsed by default.
+- Manual completion confirmation: reviewers click "确认完成" once to save and confirm both keypoints and Shenton status. The 20 required points drive keypoint progress, while #10/#11 remain optional.
 - The Shenton tool lets a reviewer mark left/right obturator upper curve and femoral-neck inner-lower curve with at least 3 points per segment; more points are allowed for curve fitting. Drawn Shenton control points can be selected and dragged later for correction. The reviewer records `continuous`, `discontinuous`, or `uncertain`. The tool no longer asks reviewers to mark an extension intersection; legacy intersection fields are read for compatibility only and are ignored by training export. Measurements are research aids only, not clinical conclusions.
 - `/api/annotation/measurements/compute` returns Shenton endpoint `gap_px`, optional `gap_mm`, AI/Tonnis angle, Sharp angle, CE angle, neck-shaft angle, acetabular depth, and warnings. Acetabular depth is shown in mm when DICOM PixelSpacing is available.
 
@@ -237,11 +236,10 @@ The UI treats a point as visible only when `visible = true`, `visibility > 0`, a
 | Fit / `F` | Recenter and scale the current image to the canvas; in ROI/scan mode it fits the ROI or scan region when available |
 | `←` / `→` | Previous / next image |
 | `Delete` | Mark selected point missing, hide/delete selected connection, or delete the current image when nothing else is selected |
-| `Ctrl+S` | Save |
+| `Ctrl+S` | Save draft |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
 | `V` / `P` / `R` / `C` / `S` | Select / point / ROI / scan-corner / Shenton mode |
 | `E` | Toggle enhanced/original view |
-| `D` | Auto-detect current image |
 | `F` | Fit image, fit ROI while using the ROI tool, or fit the scan region while using the scan tool |
 | `?` | Show keyboard shortcuts |
 | `H` | Toggle point labels |

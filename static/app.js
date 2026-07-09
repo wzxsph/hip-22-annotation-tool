@@ -167,16 +167,12 @@ const App = {
     document.getElementById("autoDetectToggle").addEventListener("change", App.saveSettings);
     document.getElementById("autoSaveToggle").addEventListener("change", App.saveSettings);
     document.getElementById("annotatorInput").addEventListener("change", App.saveSettings);
-    document.getElementById("btnSave").addEventListener("click", () => App.saveAnnotation());
+    document.getElementById("btnSave").addEventListener("click", App.confirmCompleteAndSave);
     document.getElementById("btnClearPoints").addEventListener("click", App.clearCurrentImagePoints);
     document.getElementById("btnDeleteImage").addEventListener("click", App.deleteCurrentImage);
     document.getElementById("btnDeleteSelectedImages").addEventListener("click", App.deleteSelectedImages);
     document.getElementById("btnRestoreImages").addEventListener("click", App.openRestoreDialog);
     document.getElementById("btnConfirmRestore").addEventListener("click", App.restoreSelectedImages);
-    document.getElementById("btnConfirmKeypointsComplete").addEventListener("click", App.confirmKeypointsComplete);
-    document.getElementById("btnConfirmShentonComplete").addEventListener("click", App.confirmShentonComplete);
-    document.getElementById("btnAutoDetect").addEventListener("click", App.handleAutoDetectCurrent);
-    document.getElementById("btnAutoDetectEnhanced").addEventListener("click", () => App.handleAutoDetectCurrent({ useEnhanced: true }));
     document.getElementById("btnShortcutHelp").addEventListener("click", App.showShortcuts);
     document.getElementById("btnExportYolo").addEventListener("click", () => {
       window.location.href = "/api/annotation/export-yolo";
@@ -442,63 +438,7 @@ const App = {
   },
 
   handleAutoDetectCurrent: async (options = {}) => {
-    if (!App.state.currentFilename || !App.state.annotation) {
-      App.setStatus("请先打开一张图片");
-      return;
-    }
-    const useEnhanced = Boolean(options.useEnhanced);
-    const button = document.getElementById(useEnhanced ? "btnAutoDetectEnhanced" : "btnAutoDetect");
-    button.disabled = true;
-    const saved = await App.saveAnnotation({ silent: true, skipManifest: true });
-    if (saved === false) {
-      button.disabled = false;
-      return;
-    }
-    const useRoi = Boolean(App.currentRoiCrop());
-    const useScan = !useRoi;
-    const requestedLabel = useRoi ? (useEnhanced ? "ROI内增强识别" : "ROI内原图识别") : useEnhanced ? "增强识别" : "原图识别";
-    App.setStatus(`正在${requestedLabel}...`);
-    try {
-      const res = await fetch("/api/annotation/auto-detect-image", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename: App.state.currentFilename,
-          preserve_manual: true,
-          include_partial: true,
-          use_enhanced: useEnhanced,
-          use_roi: useRoi,
-          use_scan: useScan,
-        }),
-      });
-      const data = await App.readJsonResponse(res, "auto detect image failed");
-      const info = data.auto_detect || {};
-      const resultLabel = App.autoDetectResultLabel(info, useEnhanced);
-      App.applyAnnotation(data);
-      App.state.lastSave = {
-        filename: data.image.filename,
-        timeText: new Date().toLocaleTimeString(),
-        annotationPath: info.annotation_path || "annotations",
-        labelPath: info.label_path || "同名 txt",
-      };
-      await App.loadManifest();
-      App.renderSaveInfo();
-      if (info.applied && info.visible_count > 0) {
-        App.setStatus(`${resultLabel}完成：识别到 ${info.visible_count} 个点，未识别到的点保持缺失`);
-      } else {
-        App.setStatus(`${resultLabel}未找到可用点，所有未识别点保持缺失，请人工标注或把图片发给项目团队排查`);
-      }
-    } catch (err) {
-      App.setStatus(`识别失败: ${err.message}`);
-    } finally {
-      button.disabled = false;
-    }
-  },
-
-  autoDetectResultLabel: (info, useEnhanced = false) => {
-    if (info?.roi_crop_used) return useEnhanced ? "ROI内增强识别" : "ROI内原图识别";
-    if (info?.scan_transform_used) return "扫描校正识别";
-    return useEnhanced ? "全图增强识别" : "全图识别";
+    App.setStatus("自动识别已改为导入或打开图片时自动运行");
   },
 
   loadManifest: async () => {
@@ -1089,51 +1029,12 @@ const App = {
     ).length;
   },
 
-  confirmKeypointsComplete: async () => {
-    if (!App.state.annotation) {
-      App.setStatus("请先打开一张图片");
-      return;
-    }
-    const visible = App.visibleKeypointCount();
-    const optionalVisible = App.optionalVisibleKeypointCount();
-    const optionalTotal = App.optionalKeypoints();
-    const missing = Math.max(0, App.requiredKeypoints() - visible);
-    const message =
-      missing > 0
-        ? `当前还有 ${missing} 个必标关键点缺失。\n#10/#11 为可选点，不计入缺失。\n\n仍要人工确认本图关键点已完成吗？`
-        : `确认本图关键点已经人工复核完成吗？\n#10/#11 可选点已标 ${optionalVisible}/${optionalTotal}。`;
-    if (!window.confirm(message)) return;
-    App.pushHistory();
-    App.state.annotation.review = App.state.annotation.review || {};
-    App.state.annotation.review.manual_keypoints_complete = {
-      status: "confirmed",
-      visible_count: visible,
-      missing_count: missing,
-      optional_visible_count: optionalVisible,
-      optional_missing_count: Math.max(0, optionalTotal - optionalVisible),
-      updated_at: new Date().toISOString(),
-      annotator: document.getElementById("annotatorInput")?.value?.trim() || "default",
-    };
-    App.refreshAll();
-    const saved = await App.saveAnnotation();
-    App.setStatus(saved ? "已确认关键点完成" : "关键点确认保存失败");
-  },
-
-  shentonConfirmed: () => {
-    const review = App.state.annotation?.review || {};
-    return review.manual_shenton_complete?.status === "confirmed";
-  },
-
-  confirmShentonComplete: async () => {
-    if (!App.state.annotation) {
-      App.setStatus("请先打开一张图片");
-      return;
-    }
+  shentonCompleteSideCount: () => {
+    if (!App.state.annotation) return 0;
     const shenton = App.state.annotation.shenton_curves || {};
     const review = App.state.annotation.shenton_review || {};
-    const sides = ["left", "right"];
     let completeSides = 0;
-    for (const side of sides) {
+    for (const side of ["left", "right"]) {
       const curves = shenton[side] || {};
       let curvesOk = true;
       for (const seg of ["obturator_upper_curve", "femoral_neck_inner_lower_curve"]) {
@@ -1143,28 +1044,56 @@ const App = {
         }
       }
       const sideReview = review[side]?.status || "not_reviewed";
-      const sideReviewed = ["continuous", "discontinuous", "uncertain"].includes(sideReview);
-      if (curvesOk && sideReviewed) completeSides += 1;
+      if (curvesOk && ["continuous", "discontinuous", "uncertain"].includes(sideReview)) completeSides += 1;
     }
-    const missing = Math.max(0, 2 - completeSides);
-    const message =
-      missing > 0
-        ? `当前还有 ${missing} 侧沈通线未完成。\n\n仍要人工确认本图沈通线已完成吗？`
-        : "确认本图沈通线已经人工复核完成吗？";
+    return completeSides;
+  },
+
+  confirmCompleteAndSave: async () => {
+    if (!App.state.annotation) {
+      App.setStatus("请先打开一张图片");
+      return;
+    }
+    const visible = App.visibleKeypointCount();
+    const optionalVisible = App.optionalVisibleKeypointCount();
+    const optionalTotal = App.optionalKeypoints();
+    const missing = Math.max(0, App.requiredKeypoints() - visible);
+    const completeSides = App.shentonCompleteSideCount();
+    const missingShentonSides = Math.max(0, 2 - completeSides);
+    const issues = [];
+    if (missing > 0) issues.push(`当前还有 ${missing} 个必标关键点缺失；#10/#11 为可选点，不计入缺失。`);
+    if (missingShentonSides > 0) issues.push(`当前还有 ${missingShentonSides} 侧沈通线未完成。`);
+    const message = issues.length
+      ? `${issues.join("\n")}\n\n仍要确认本图完成并保存吗？`
+      : `确认本图已经复核完成并保存吗？\n#10/#11 可选点已标 ${optionalVisible}/${optionalTotal}。`;
     if (!window.confirm(message)) return;
     App.pushHistory();
+    const now = new Date().toISOString();
+    const annotator = document.getElementById("annotatorInput")?.value?.trim() || "default";
     App.state.annotation.review = App.state.annotation.review || {};
+    App.state.annotation.review.manual_keypoints_complete = {
+      status: "confirmed",
+      visible_count: visible,
+      missing_count: missing,
+      optional_visible_count: optionalVisible,
+      optional_missing_count: Math.max(0, optionalTotal - optionalVisible),
+      updated_at: now,
+      annotator,
+    };
     App.state.annotation.review.manual_shenton_complete = {
       status: "confirmed",
       complete_sides: completeSides,
-      updated_at: new Date().toISOString(),
-      annotator: document.getElementById("annotatorInput")?.value?.trim() || "default",
+      updated_at: now,
+      annotator,
     };
     App.refreshAll();
-    console.log("confirmShentonComplete: saving annotation with review", JSON.stringify(App.state.annotation.review));
     const saved = await App.saveAnnotation();
-    console.log("confirmShentonComplete: save returned", saved, "manifest entry:", App.state.manifestByFilename.get(App.state.annotation?.image?.filename));
-    App.setStatus(saved ? "已确认沈通线完成" : "沈通线确认保存失败");
+    App.setStatus(saved ? "已确认完成并保存" : "确认完成保存失败");
+  },
+
+  shentonConfirmed: () => {
+    const review = App.state.annotation?.review || {};
+    return review.manual_shenton_complete?.status === "confirmed";
   },
 
   scrollActiveThumbnailIntoView: () => {
@@ -2378,7 +2307,6 @@ const App = {
     if (event.key.toLowerCase() === "l") App.setTool("line");
     if (event.key.toLowerCase() === "s") App.setTool("shenton");
     if (event.key.toLowerCase() === "e") App.setImageView(App.state.imageView === "enhanced" ? "original" : "enhanced");
-    if (event.key.toLowerCase() === "d") App.handleAutoDetectCurrent();
     if (event.key.toLowerCase() === "f") {
       if (App.state.activeTool === "scan" && App.currentScanTransform()) App.fitToScanTransform();
       else if (App.state.activeTool === "roi" && App.currentRoiCrop()) App.fitToRoi();
@@ -3069,14 +2997,11 @@ const App = {
 
   renderKeypointConfirmation: () => {
     const text = document.getElementById("keypointConfirmText");
-    const button = document.getElementById("btnConfirmKeypointsComplete");
-    if (!text || !button) return;
+    if (!text) return;
     if (!App.state.annotation) {
       text.textContent = "关键点尚未人工确认完成";
-      button.disabled = true;
       return;
     }
-    button.disabled = false;
     const review = App.state.annotation.review?.manual_keypoints_complete;
     if (review?.status === "confirmed") {
       const annotator = review.annotator || "default";
@@ -3116,14 +3041,11 @@ const App = {
 
   renderShentonConfirmation: () => {
     const text = document.getElementById("shentonConfirmText");
-    const button = document.getElementById("btnConfirmShentonComplete");
-    if (!text || !button) return;
+    if (!text) return;
     if (!App.state.annotation) {
       text.textContent = "沈通线尚未人工确认完成";
-      button.disabled = true;
       return;
     }
-    button.disabled = false;
     const confirmed = App.shentonConfirmed();
     if (confirmed) {
       const meta = App.state.annotation.review?.manual_shenton_complete || {};

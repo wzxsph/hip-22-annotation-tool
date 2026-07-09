@@ -6,10 +6,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .auto_detection import estimate_keypoints_with_preprocessing, preprocess_label
+from .auto_detection import (
+    AUTO_DETECT_POLICY_LABEL,
+    clear_non_manual_keypoints,
+    estimate_keypoints_original_then_enhanced,
+    should_retry_auto_detection,
+)
 from .image_io import read_supported_image
 from .measurements import compute_measurements
-from .schema import create_blank_annotation, normalize_split
+from .schema import create_blank_annotation, ensure_keypoint_template, normalize_split
 from .storage import (
     find_sidecar_label_path,
     load_annotation,
@@ -26,7 +31,7 @@ class AutoDetectItem:
     image_path: Path
     split: str = "train"
     annotator: str = "default"
-    use_enhanced: bool = True
+    use_enhanced: bool = False
 
 
 _lock = threading.Lock()
@@ -60,7 +65,7 @@ def replace_auto_detect_queue(
     *,
     split: str = "train",
     annotator: str = "default",
-    use_enhanced: bool = True,
+    use_enhanced: bool = False,
 ) -> dict[str, Any]:
     root = root.expanduser().resolve()
     items = [
@@ -80,7 +85,7 @@ def replace_auto_detect_queue(
         status["total"] = len(items)
         status["pending"] = len(items)
         status["running"] = bool(items)
-        status["image_preprocess"] = preprocess_label(use_enhanced=use_enhanced) if items else None
+        status["image_preprocess"] = AUTO_DETECT_POLICY_LABEL if items else None
         _status_by_root[_root_key(root)] = status
         _ensure_worker_locked()
         return dict(status)
@@ -116,6 +121,32 @@ def _disabled_template_fallback(*, reason: str, model_visible_count: int) -> dic
         "reason": reason,
         "model_visible_count": int(model_visible_count),
         "note": "Template fallback is disabled; missing model points remain missing for manual annotation.",
+    }
+
+
+def _model_visible_count_for_run(run) -> int:
+    return visible_keypoint_count(run.result.keypoints) if run.usable else 0
+
+
+def _auto_initialization_from_run(run, *, created_at: str) -> dict[str, Any]:
+    model_visible_count = _model_visible_count_for_run(run)
+    result = run.result
+    return {
+        "source": result.source,
+        "strategy": result.strategy,
+        "attempts": result.attempts,
+        "warnings": list(result.warnings),
+        "image_preprocess": run.image_preprocess,
+        "preprocess_policy": AUTO_DETECT_POLICY_LABEL,
+        "preprocess_attempts": run.preprocess_attempts,
+        "roi_crop_used": run.roi_used,
+        "scan_transform_used": run.scan_used,
+        "model_visible_count": model_visible_count,
+        "template_fallback": _disabled_template_fallback(
+            reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
+            model_visible_count=model_visible_count,
+        ),
+        "created_at": created_at,
     }
 
 
@@ -164,7 +195,10 @@ def _process_item(item: AutoDetectItem) -> str:
     filename = item.image_path.name
     existing = load_annotation(filename, root)
     if existing is not None:
+        existing = ensure_keypoint_template(existing)
         existing.image.split = normalize_split(item.split)
+        image = None
+        metadata: dict[str, Any] = {}
         try:
             image, metadata = read_supported_image(item.image_path)
             existing.image.width = image.width
@@ -172,6 +206,17 @@ def _process_item(item: AutoDetectItem) -> str:
             _apply_image_metadata(existing, metadata)
         except Exception:
             pass
+        if should_retry_auto_detection(existing) and image is not None:
+            run = estimate_keypoints_original_then_enhanced(image)
+            if run.usable:
+                existing.keypoints = run.result.keypoints
+            else:
+                existing = clear_non_manual_keypoints(existing)
+            existing.auto_initialization = _auto_initialization_from_run(run, created_at=existing.annotator.created_at)
+            existing.measurements_snapshot = compute_measurements(existing)
+            save_annotation(existing, root)
+            upsert_manifest_image(item.image_path, annotation=existing, root=root, split=item.split)
+            return "done"
         upsert_manifest_image(item.image_path, annotation=existing, root=root, split=item.split)
         return "skipped"
 
@@ -195,26 +240,12 @@ def _process_item(item: AutoDetectItem) -> str:
     annotation = create_blank_annotation(filename, image.width, image.height, annotator=item.annotator)
     annotation.image.split = normalize_split(item.split)
     _apply_image_metadata(annotation, metadata)
-    result, image_preprocess, roi_used, scan_used = estimate_keypoints_with_preprocessing(image, use_enhanced=item.use_enhanced)
-    model_visible_count = visible_keypoint_count(result.keypoints)
-    annotation.keypoints = result.keypoints
-    template_fallback = _disabled_template_fallback(
-        reason=result.source if model_visible_count == 0 else "partial-missing-keypoints",
-        model_visible_count=model_visible_count,
-    )
-    warnings = list(result.warnings)
-    annotation.auto_initialization = {
-        "source": result.source,
-        "strategy": result.strategy,
-        "attempts": result.attempts,
-        "warnings": warnings,
-        "image_preprocess": image_preprocess,
-        "roi_crop_used": roi_used,
-        "scan_transform_used": scan_used,
-        "model_visible_count": model_visible_count,
-        "template_fallback": template_fallback,
-        "created_at": annotation.annotator.created_at,
-    }
+    run = estimate_keypoints_original_then_enhanced(image)
+    if run.usable:
+        annotation.keypoints = run.result.keypoints
+    else:
+        annotation = clear_non_manual_keypoints(annotation)
+    annotation.auto_initialization = _auto_initialization_from_run(run, created_at=annotation.annotator.created_at)
     annotation.measurements_snapshot = compute_measurements(annotation)
     save_annotation(annotation, root)
     upsert_manifest_image(item.image_path, annotation=annotation, root=root, split=item.split)

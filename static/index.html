@@ -19,13 +19,11 @@
             <input id="fileInput" type="file" accept="image/*,.dcm,.dicom" hidden />
           </label>
           <button id="btnFolder" type="button">导入文件夹</button>
-          <button id="btnSave" type="button">保存</button>
+          <button id="btnSave" type="button">确认完成</button>
           <button id="btnClearPoints" type="button" title="清空当前图片的 24 个关键点，不影响 Shenton 曲线、ROI 或扫描校正">清空点位</button>
           <button id="btnDeleteImage" class="danger" type="button" title="将这张图片及同名标注文件移动到图片同目录 trash 文件夹">删除本图</button>
           <button id="btnDeleteSelectedImages" class="danger" type="button" disabled title="将勾选缩略图及同名标注文件移动到图片同目录 trash 文件夹">删除所选</button>
           <button id="btnRestoreImages" type="button" title="从当前工作区 trash 文件夹中选择图片还原">还原图片</button>
-          <button id="btnAutoDetect" type="button" title="用原图对当前图片重新识别；保留已经人工修改的点">原图识别</button>
-          <button id="btnAutoDetectEnhanced" type="button" title="用增强预览图识别当前图片；仅辅助识别，不覆盖原图">增强识别</button>
           <button id="btnShortcutHelp" type="button" title="查看使用指南和快捷键">指南</button>
           <button id="btnUndo" type="button" aria-label="撤销">↶</button>
           <button id="btnRedo" type="button" aria-label="重做">↷</button>
@@ -194,11 +192,8 @@
             <small>向左/右调对比度，向上/下调亮度；参数随标注保存。</small>
           </div>
           <div class="completion-actions">
-            <button id="btnConfirmKeypointsComplete" type="button">确认关键点完成</button>
+            <div class="settings-title">完成状态</div>
             <small id="keypointConfirmText">关键点尚未人工确认完成</small>
-          </div>
-          <div class="completion-actions">
-            <button id="btnConfirmShentonComplete" type="button">确认沈通线完成</button>
             <small id="shentonConfirmText">沈通线尚未人工确认完成</small>
           </div>
           <div class="selected-box">
@@ -338,9 +333,8 @@
           <span>C</span><span>扫描四角</span>
           <span>S</span><span>Shenton 曲线</span>
           <span>E</span><span>增强图 / 原图</span>
-          <span>D</span><span>原图识别</span>
           <span>F</span><span>适配当前图</span>
-          <span>Ctrl+S</span><span>保存</span>
+          <span>Ctrl+S</span><span>保存草稿</span>
           <span>← / →</span><span>上一张 / 下一张</span>
           <span>Delete</span><span>删除选中项；无选中项时删除当前图片</span>
         </div>
