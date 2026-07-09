@@ -10,7 +10,7 @@ from .routes import router as annotation_router
 
 STATIC_DIR = resource_path("static")
 
-app = FastAPI(title="Hip 24-Point Annotation Tool", version="0.3.3")
+app = FastAPI(title="Hip 24-Point Annotation Tool", version="0.3.4")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(annotation_router)
 

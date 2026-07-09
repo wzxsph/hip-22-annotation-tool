@@ -397,7 +397,7 @@ wheels = [
 
 [[package]]
 name = "hip-22-annotation-tool"
-version = "0.3.3"
+version = "0.3.4"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

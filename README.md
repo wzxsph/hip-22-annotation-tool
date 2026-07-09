@@ -122,12 +122,12 @@ If the model file is missing or `ultralytics` is unavailable, the tool still ope
 
 ## DICOM, Enhanced Preview, And Shenton Prototype
 
-Version 0.3.3 tightens the default guide layout and review ergonomics on top of the 0.3.2 Windows release-path compatibility fix, 0.3.1 manual confirmation workflows, and recoverable image deletion:
+Version 0.3.4 improves the auto-detection completion workflow on top of the 0.3.3 default guide layout and review ergonomics, 0.3.2 Windows release-path compatibility fix, 0.3.1 manual confirmation workflows, and recoverable image deletion:
 
 - DICOM import reads `PixelSpacing` / `ImagerPixelSpacing`, applies rescale slope/intercept, window center/width, and `MONOCHROME1` inversion. Unsupported compressed/private formats are reported as warnings instead of stopping the whole folder import.
 - The annotation JSON stores non-PHI image metadata only: `source_format`, pixel spacing fields, spacing source, and DICOM warnings. It does not store `PatientName`, `PatientID`, `AccessionNumber`, or similar identifiers.
 - The UI opens in `Original` viewing by default and can switch to `Enhanced` for comparison. Enhanced view uses conservative grayscale normalization and contrast adjustment for easier boundary review. It does not change coordinates or overwrite the source image.
-- Folder import queues model-assisted initialization with original-first/enhanced-fallback preprocessing; empty or previously failed auto annotations are retried, while manual or confirmed work is preserved.
+- Folder import queues model-assisted initialization with original-first/enhanced-fallback preprocessing; empty or previously failed auto annotations are retried, while manual or confirmed work is preserved. Auto-detect completion now keeps unfinished images pending until keypoints or Shenton review still needing attention are explicitly confirmed.
 - If a reviewer draws an ROI crop, current-image auto-detect retries inside that ROI and maps detected points back to the original image coordinates.
 - If a reviewer marks four scan corners, current-image auto-detect first warps the image into a scan-like view, then maps detected points back to the original image coordinates. This is intended for phone-shot images with visible film borders.
 - If model output is unavailable or incomplete, missing points remain missing. The tool no longer fills absent model output with template guesses. #12 is the only inferred point: it is recalculated from same-side #3 and #7 unless manually edited.
