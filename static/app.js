@@ -15,6 +15,11 @@ const DEFAULT_LANDMARKS = [
 
 const OPTIONAL_LANDMARK_NUMBERS = new Set([10, 11]);
 
+// Hospital-facing keypoint labels follow the patient's actual left/right side,
+// which is opposite the computer-screen position for AP X-rays. This mapping
+// is for keypoint UI only; do not reuse it for Shenton controls or stored data.
+const KEYPOINT_SIDE_LABELS = { left: "图像右侧", right: "图像左侧" };
+
 const DEFAULT_SETTINGS = {
   dataset_root: "annotation-tool",
   auto_detect: true,
@@ -278,12 +283,11 @@ const App = {
   buildPointList: () => {
     const container = document.getElementById("pointGroups");
     container.innerHTML = "";
-    const labels = { left: "图像左侧", right: "图像右侧" };
     App.state.schema.sides.forEach((side) => {
       const group = document.createElement("section");
       group.className = "point-group";
       const title = document.createElement("h3");
-      title.textContent = labels[side] || side;
+      title.textContent = App.keypointSideLabel(side);
       group.appendChild(title);
       App.state.schema.landmarks.forEach((landmark) => {
         const key = App.keyFor(side, landmark.name);
@@ -2219,7 +2223,6 @@ const App = {
   showContextMenu: (x, y) => {
     const menu = document.getElementById("contextMenu");
     const items = document.getElementById("contextItems");
-    const sideLabels = { left: "left", right: "right" };
     document.getElementById("contextTitle").textContent = "选择点位";
     items.innerHTML = "";
     App.state.schema.sides.forEach((side) => {
@@ -2228,7 +2231,7 @@ const App = {
         const point = App.state.annotation.keypoints[key];
         const item = document.createElement("div");
         item.className = "context-item";
-        item.innerHTML = `<span>${sideLabels[side] || side} #${landmark.number} ${landmark.label_zh}</span><small>${App.pointIsVisible(point) ? "已标" : ""}</small>`;
+        item.innerHTML = `<span>${App.keypointSideLabel(side)} #${landmark.number} ${landmark.label_zh}</span><small>${App.pointIsVisible(point) ? "已标" : ""}</small>`;
         item.addEventListener("click", (event) => {
           event.stopPropagation();
           App.placePoint(key, App.state.contextImagePos);
@@ -3093,7 +3096,7 @@ const App = {
       coords.textContent = App.state.activeTool === "line" && App.state.pendingConnectionStart ? "请选择第二个点" : "-";
     } else {
       const point = App.state.annotation.keypoints[App.state.selectedPoint];
-      label.textContent = point.label;
+      label.textContent = App.keypointDisplayLabel(point);
       coords.textContent = App.pointIsVisible(point) ? `${point.x.toFixed(1)}, ${point.y.toFixed(1)} · ${App.sourceLabel(point.source)}` : "缺失";
     }
     const selectedConnection = App.state.annotation?.connections?.find((item) => item.id === App.state.selectedConnection);
@@ -3104,9 +3107,20 @@ const App = {
     const a = App.state.annotation?.keypoints?.[connection.point_a];
     const b = App.state.annotation?.keypoints?.[connection.point_b];
     if (!a || !b) return connection.label || "连线";
-    const sideA = a.side === "left" ? "左" : "右";
-    const sideB = b.side === "left" ? "左" : "右";
+    const sideA = App.keypointSideLabel(a.side);
+    const sideB = App.keypointSideLabel(b.side);
     return `${sideA}#${a.number} - ${sideB}#${b.number}`;
+  },
+
+  keypointSideLabel: (side) => KEYPOINT_SIDE_LABELS[side] || side,
+
+  keypointDisplayLabel: (point) => {
+    if (!point) return "-";
+    const landmark = (App.state.schema?.landmarks || DEFAULT_LANDMARKS).find(
+      (item) => item.name === point.name || Number(item.number) === Number(point.number),
+    );
+    const landmarkLabel = landmark?.label_zh || point.name || "关键点";
+    return `${App.keypointSideLabel(point.side)} #${point.number} ${landmarkLabel}`;
   },
 
   renderWarnings: () => {

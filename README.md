@@ -4,6 +4,9 @@ FastAPI + Canvas web tool for reviewing and editing 24 hip X-ray landmarks, with
 
 This project is a research annotation aid. It is not a medical device, does not provide diagnosis, and should not be used as a standalone clinical decision system. All automatically generated points should be reviewed and corrected by a qualified user before downstream use.
 
+> [!IMPORTANT]
+> **关键点侧别显示约定：软件关键点界面显示的“图像左侧”是电脑画面的右侧，显示的“图像右侧”是电脑画面的左侧。** 这是为了符合医院按患者实际左右侧称呼的习惯。该规则只交换关键点的前端名称，不改变底层 `left_*` / `right_*` 键名、坐标或导出数据。**Shenton 线不适用此交换规则**：Shenton 面板的“图像左侧 / 图像右侧”及其存储侧别保持原样。
+
 ![Annotation workspace](docs/screenshots/workspace-overview.png)
 
 ## What It Does
@@ -192,7 +195,7 @@ Important fields:
 
 ## Landmark Schema
 
-Each image stores 24 keypoints. `left_*` means image-left and `right_*` means image-right; there is no anatomical left/right swap. Completion currently requires 20 points: #1-#9 and #12 on both sides. #10 and #11 are optional by default.
+Each image stores 24 keypoints. In stored data, `left_*` means the computer image-left and `right_*` means the computer image-right. The keypoint UI intentionally presents the opposite hospital-facing names: stored `left_*` is displayed as `图像右侧`, and stored `right_*` is displayed as `图像左侧`. This is display-only and does not rename or swap stored coordinates. Shenton side labels and Shenton storage are explicitly excluded from this keypoint-only display rule. Completion currently requires 20 points: #1-#9 and #12 on both sides. #10 and #11 are optional by default.
 
 | # | Field | Chinese label |
 |---|---|---|

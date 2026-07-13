@@ -2,6 +2,15 @@
 
 This repository is the standalone public annotation tool. Keep it clean, small, and safe to publish.
 
+## Critical Keypoint Side-Label Contract
+
+> **强制约定：关键点界面显示的“图像左侧”必须对应电脑画面的右侧；关键点界面显示的“图像右侧”必须对应电脑画面的左侧。**
+
+- Stored `left_*` keypoints still mean computer image-left, but the keypoint UI must display them as `图像右侧`.
+- Stored `right_*` keypoints still mean computer image-right, but the keypoint UI must display them as `图像左侧`.
+- This is a frontend label mapping only. Never rename keypoint IDs, swap coordinates, change YOLO ordering, or alter export/storage semantics to implement it.
+- **Shenton is an explicit exception.** Do not apply the keypoint mapping to Shenton controls, Shenton labels, `shenton_curves`, `shenton_review`, or Shenton exports. Doctors already use those sides according to the patient-side convention and may place “图像左侧” Shenton points on the computer image-right.
+
 ## Project Boundary
 
 - This repo contains only the FastAPI + Canvas annotation app, tests, docs, screenshots, and the bundled `models/yolo11n-best.pt` weight.
@@ -35,7 +44,7 @@ This repository is the standalone public annotation tool. Keep it clean, small, 
 - Always keep 24 keypoint keys: `left/right × #1-#12`.
 - Completion uses 20 required keypoints: #1-#9 and #12 on both sides. #10 and #11 are optional by default and must not block keypoint completion.
 - #12 (`femoral_neck_axis_proximal`) is inferred from the same-side #3 (`femoral_head_center`) and #7 (`femoral_neck_axis_center`) midpoint unless #12 has `source="manual"`. Never infer left #12 from right-side points or vice versa, and never allow duplicate #12 definitions per side.
-- `left_*` means image-left, `right_*` means image-right. Do not perform anatomical side swapping.
+- Internally, `left_*` means computer image-left and `right_*` means computer image-right. Keep this storage/coordinate meaning unchanged; only the keypoint frontend labels are intentionally reversed according to the Critical Keypoint Side-Label Contract above.
 - Missing points are explicit: `x=null`, `y=null`, `visible=false`, `visibility=0`, `source="missing"`.
 - Missingness is determined by visibility and coordinates, not by `source`.
 - `source="estimated"` is used for inferred points such as #12. `source="template_guess"` may appear in legacy data only and must remain visually distinct from `pose11_side` model output and `manual` doctor edits.
